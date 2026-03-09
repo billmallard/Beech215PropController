@@ -107,10 +107,8 @@ Set `PULSES_PER_REV` in the firmware before flashing:
 
 | Engine | Cylinders | PULSES_PER_REV |
 |---|---|---|
-| Continental IO-470 | 6 | 3 |
-| Continental IO-520 | 6 | 3 |
 | Continental E-185/E-225 | 6 | 3 |
-| Lycoming O-435 | 6 | 3 |
+
 
 All early Bonanzas use Continental 6-cylinder engines. `PULSES_PER_REV = 3` is correct for all of them.
 
