@@ -283,30 +283,52 @@ The panel unit mounts in the existing prop control knob opening on the instrumen
 
 ### 6.1 Components
 
-- SSD1306 1.3" OLED module
-- 5 momentary pushbuttons (panel-mount rated)
-- KY-040 rotary encoder with pushbutton
-- 10kΩ linear taper potentiometer
-- Small project enclosure or custom panel plate
+- SSD1306 1.3" OLED module (I2C, 128×64)
+- 5-position single-pole rotary switch (Lorlin CK1024 or Grayhill 56-series recommended)
+- Small panel plate or project enclosure
 
 ### 6.2 Layout Suggestion
 
 ```
 ┌─────────────────────────────────────────────┐
 │  [OLED DISPLAY — 1.3"]                      │
-│  SET: 2300 RPM    ACT: 2287 RPM             │
-│  CRUISE           AUTO  HOLD                │
-├──────┬──────┬──────┬──────┬──────┬──────────┤
-│ MAX  │ CLB  │ CRS  │ ECO  │ LOW  │  [KNOB]  │
-│ 2650 │ 2450 │ 2300 │ 2200 │ COARSE│  TRIM   │
-└──────┴──────┴──────┴──────┴──────┴──────────┘
+│  CRUISE                              AUTO   │
+│  CRUISE                                     │
+│  ─────────────────────────────              │
+│  SET: 2300 RPM                              │
+│  ACT: 2287 RPM                              │
+│  HOLD ──────────────────                    │
+├─────────────────────────────────────────────┤
+│         MAX  CLB  CRS  ECO  LOW             │
+│        [ 1 - 2 - 3 - 4 - 5 ]               │
+│              [  KNOB  ]                     │
+└─────────────────────────────────────────────┘
 ```
 
-### 6.3 Wiring the Panel Unit
+The 5-position rotary switch provides tactile, positive detent selection of each preset. There is no ambiguous "between" state in normal use — each detent corresponds to a specific RPM.
 
-Use shielded cable between panel unit and governor box (minimum 8 conductors). Connect to J2 and J3 on the PCB per the wiring table in [WIRING.md](WIRING.md).
+### 6.3 Rotary Switch Wiring
 
-The existing prop control opening and the original potentiometer shaft hole can be reused. The linear pot shoulder nut is the same size as the original rheostat. The knob from the original installation can be reused on the new pot.
+The switch has one COMMON terminal and five position terminals:
+
+```
+Switch COMMON  ──── GND  (J2 pin 2 or pin 10)
+Position 1     ──── J2 pin 5  (MAX 2650)
+Position 2     ──── J2 pin 6  (CRUISE CLIMB 2450)
+Position 3     ──── J2 pin 7  (CRUISE 2300)
+Position 4     ──── J2 pin 8  (ECONOMY 2200)
+Position 5     ──── J2 pin 9  (LOW/EMERGENCY COARSE)
+```
+
+No resistors needed. The Nano's internal pull-ups (activated in firmware) keep all position lines HIGH. The selected position pulls its line LOW through the switch.
+
+### 6.4 Panel Cable
+
+10-conductor shielded cable, J2 connector at both ends (or bare wires at the switch end). Total wires: 5V, GND, SDA, SCL, positions 1–5, switch common = 10. The original installation's cable routing can be reused.
+
+### 6.5 Reusing the Original Knob
+
+The original prop control knob fits any ¼" D-shaft rotary switch. The Lorlin CK1024 and Grayhill 56-series both use standard ¼" shafts. If the original knob has a different bore, knob adapters are available from Mouser for ~$1.
 
 ---
 

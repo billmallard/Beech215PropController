@@ -184,16 +184,35 @@ If you have a scope, put it on J1 pin C (INC relay drive). You should see:
 - Pulsing HIGH/LOW as you enter the proportional zone
 - Steady LOW in the deadband
 
-### Test 6: Preset Buttons
+### Test 6: Rotary Switch Positions
 
-In AUTO mode at 2300 RPM:
+In AUTO mode at 2300 RPM (simulated), switch on position 3 (CRUISE):
 
-1. Press MAX button — setpoint should jump to 2650, INC relay drives prop toward fine
-2. Press ECO button — setpoint drops to 2200, DEC relay activates
-3. Press CRS button — returns to 2300
-4. Encoder CW: setpoint increments +10 RPM per detent
-5. Encoder CCW: setpoint decrements −10 RPM per detent
-6. Encoder push: should reset trim to zero (if implemented) or confirm preset
+1. **Turn switch to position 1 (MAX, 2650):**
+   - SET display begins ramping upward from 2300 toward 2650 at 100 RPM/sec
+   - A small `>` indicator appears on the SET line while ramping
+   - INC relay activates as the ramped setpoint rises above the simulated 2300 RPM
+   - After ~3.5 seconds, SET display reads 2650 and INC relay is at full duty
+   - Advance simulated RPM to 2650 — relay should stop, HOLD state
+
+2. **Turn switch to position 4 (ECO, 2200):**
+   - SET display ramps *downward* from 2650 toward 2200
+   - DEC relay activates immediately as setpoint drops below actual
+   - Smooth, proportional — not a sudden lurch
+
+3. **Turn switch to position 3 (CRUISE, 2300):**
+   - Setpoint ramps back up to 2300
+   - Confirm HOLD state when simulated RPM matches
+
+4. **Between-position test:**
+   - Slowly rotate switch between positions 2 and 3
+   - Brief period where neither is selected: OLED should hold last preset, no relay change
+   - Switch settles on new position: ramp begins smoothly
+
+5. **Ramp rate verification (optional):**
+   - From ECO (2200) to MAX (2650) = 450 RPM change
+   - At 100 RPM/sec, transition should take ~4.5 seconds
+   - Time it with a stopwatch — should be 4–5 seconds
 
 ### Test 7: Emergency / Low RPM Preset
 

@@ -85,13 +85,19 @@ All resistors: 1/4W metal film, 1% tolerance
 
 ## Panel Unit Components
 
-| Part | Qty | Notes |
-|---|---|---|
-| KY-040 Rotary Encoder | 1 | With pushbutton switch. Available on Amazon in 5-packs. |
-| 10kΩ linear taper pot | 1 | **LINEAR TAPER (Type B) — NOT AUDIO/LOG (Type A).** Panel mount with locking nut. Bourns PDB182 or similar. ~$3–8. |
-| Momentary pushbutton (panel mount) | 5 | Any panel-mount momentary SPST NO switch. 16mm or 22mm depending on panel space. |
-| Project enclosure or panel plate | 1 | Size depends on your panel opening. See ASSEMBLY.md for typical dimensions. |
-| Multi-conductor shielded cable | ~3 ft | Minimum 15 conductors. Belden 9536 or similar avionics-grade preferred. |
+| Part | Qty | Est. Cost | Notes |
+|---|---|---|---|
+| 5-position rotary switch | 1 | $8–15 | **Single-pole, 5-position.** Lorlin CK1024 or Grayhill 56-series. Must have positive detents (not a continuous encoder). Panel-mount with standard ¼" shaft. |
+| Project enclosure or panel plate | 1 | $5–15 | Size depends on your panel opening. Aluminum preferred. |
+| Multi-conductor shielded cable | ~3 ft | $5–10 | **10 conductors sufficient** (down from 15 in button/encoder design). Belden 9536 or equivalent avionics-grade cable. |
+
+**Eliminated vs. previous design:** KY-040 encoder (~$2), 10kΩ linear pot (~$5), 5 pushbuttons (~$5 total). Panel unit is simpler and cheaper.
+
+**Switch selection notes:**
+- Lorlin CK1024: 12-position base type, order 5-position variant. Available Mouser/Digi-Key. ~$8.
+- Grayhill 56-series: industry-standard panel switch, very positive detent feel, standard ¼" D-shaft. ~$12–15.
+- Avoid: continuous rotary encoders (no detents), wafer switches without detents, or switches with more than 5 positions (firmware only uses 5).
+- The original prop control knob reuses directly on any ¼" D-shaft switch.
 
 ---
 
@@ -127,9 +133,14 @@ All resistors: 1/4W metal film, 1% tolerance
 **Estimated Digi-Key subtotal: ~$12–18**
 
 ### Amazon or eBay (modules and panels):
-Arduino Nano × 1, LM2596-5V module × 1, SSD1306 OLED 1.3" × 1, KY-040 encoder × 1, LED assortment (red + green 3mm) × 1, pin header strips × 1, female socket strips × 1, 10kΩ linear pot × 1, pushbuttons × 5
+Arduino Nano × 1, LM2596-5V module × 1, SSD1306 OLED 1.3" × 1, LED assortment (red + green 3mm) × 1, pin header strips × 1, female socket strips × 1
 
-**Estimated Amazon subtotal: ~$25–40**
+**Estimated Amazon subtotal: ~$18–28**
+
+### Mouser or Digi-Key (rotary switch):
+5-position rotary switch (Lorlin CK1024 or Grayhill 56-series) × 1
+
+**Estimated switch cost: ~$8–15**
 
 ### Aircraft Spruce or B&C (aircraft hardware):
 7-pin Cannon connector and backshell, avionics wire

@@ -27,7 +27,7 @@ The original Airborne Electronics 350A (covered under STC SA2700WE) uses a **ban
 | Deadband | Fixed by aging analog components | Software-configurable (default ±25 RPM) |
 | RPM display | None — knob position only | OLED shows set RPM and actual RPM |
 | Presets | None | 5 named presets (Max, Cruise Climb, Cruise, Economy, Emergency) |
-| Fine trim | Not possible | Rotary encoder ±10 RPM per detent |
+| Setpoint transition | Instant jump (causes full-duty relay surge) | Soft ramp 100 RPM/sec — smooth, no lurch |
 | Fail-safe | RPM signal loss → no action | Loss of mag signal → relays de-energize, alarm displayed |
 | Watchdog | None | Hardware watchdog resets MCU in 250ms if firmware stalls |
 | Motor runaway protection | Limit switches only | 8-second relay timeout regardless of limit switch state |
@@ -61,11 +61,10 @@ The system consists of two units:
 
 **Panel Unit** (replaces the knob/rheostat assembly):
 - SSD1306 1.3" OLED display (128×64, I2C)
-- 5 preset pushbuttons
-- KY-040 rotary encoder (fine RPM trim)
-- 10kΩ linear taper potentiometer (continuous RPM control, replaces original)
+- 5-position rotary switch (one detent per preset — Lorlin CK1024 or Grayhill 56-series)
+- Original prop control knob reuses directly on the switch shaft
 
-The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at approximately **$2 for 5 boards**.
+The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at approximately **$2 for 5 boards**. The panel cable is 10 conductors (simplified from earlier designs).
 
 ---
 
@@ -108,7 +107,10 @@ Set `PULSES_PER_REV` in the firmware before flashing:
 
 | Engine | Cylinders | PULSES_PER_REV |
 |---|---|---|
+| Continental IO-470 | 6 | 3 |
+| Continental IO-520 | 6 | 3 |
 | Continental E-185/E-225 | 6 | 3 |
+| Lycoming O-435 | 6 | 3 |
 
 All early Bonanzas use Continental 6-cylinder engines. `PULSES_PER_REV = 3` is correct for all of them.
 

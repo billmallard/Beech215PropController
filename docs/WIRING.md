@@ -14,64 +14,54 @@ This is the aircraft-side connector. **Pinout is identical to the original 350A.
 | 6 | F | POT_END_2 | Varies | Other end of panel rheostat/potentiometer |
 | 7 | H | MAG_P_LEAD | White | Right magneto P-lead (through 10kΩ isolating resistor in governor) |
 
-**Note on pins E and F:** In the original installation these are the two ends of the panel knob rheostat. In the new system, pin E is connected to one end of the new linear pot (tied to +5V through the PCB), pin F to the other end (tied to GND). The wiper is read by the Nano ADC on pin A0. You may also use E and F as +5V reference supply to the pot from the panel, with the wiper returned on the panel cable — either approach works.
+**Note on pins E and F:** In the original installation these are the two ends of the panel rheostat. In the rotary switch implementation, pin E carries GND to the panel (switch COMMON). Pin F is spare. The 10-wire J2 panel cable handles all panel unit connections directly without needing J1 pins E/F for signal routing.
 
 ---
 
-## Panel Unit to PCB Cable (J2 and J3)
+## Panel Unit to PCB Cable (J2 — single connector)
 
-Run a shielded multi-conductor cable (minimum 15 conductors, or two 8-conductor cables) between the panel unit and the governor box.
+A single 10-conductor shielded cable connects the panel unit to the governor box. The rotary switch replaces the original pot, 5 buttons, and encoder — **10 wires does the whole job.**
 
 ### J2 — 10-pin Panel Connector
 
-| Pin | J2 Position | Signal | Panel Component |
-|---|---|---|---|
-| 1 | 1 | +5V | Panel unit power supply |
-| 2 | 2 | GND | Panel unit ground |
-| 3 | 3 | SDA | OLED display I2C data |
-| 4 | 4 | SCL | OLED display I2C clock |
-| 5 | 5 | ENC_A | Rotary encoder Channel A |
-| 6 | 6 | ENC_B | Rotary encoder Channel B |
-| 7 | 7 | ENC_SW | Encoder pushbutton switch |
-| 8 | 8 | BTN_MAX | Preset 1 pushbutton (MAX 2650) |
-| 9 | 9 | BTN_CLIMB | Preset 2 pushbutton (CRUISE CLIMB 2450) |
-| 10 | 10 | BTN_CRUISE | Preset 3 pushbutton (CRUISE 2300) |
+| Pin | Signal | Panel Connection |
+|---|---|---|
+| 1 | +5V | OLED VCC |
+| 2 | GND | OLED GND, switch common (both tie here) |
+| 3 | SDA | OLED I2C data |
+| 4 | SCL | OLED I2C clock |
+| 5 | SW_POS1 | Switch position 1 terminal (MAX 2650) |
+| 6 | SW_POS2 | Switch position 2 terminal (CRUISE CLIMB 2450) |
+| 7 | SW_POS3 | Switch position 3 terminal (CRUISE 2300) |
+| 8 | SW_POS4 | Switch position 4 terminal (ECONOMY 2200) |
+| 9 | SW_POS5 | Switch position 5 terminal (LOW/EMERGENCY COARSE) |
+| 10 | SW_COMMON | Switch COMMON terminal (ties to GND at panel or at PCB) |
 
-### J3 — 5-pin Panel Connector
+**Switch wiring principle:** The rotary switch COMMON terminal is connected to GND (pin 10 / pin 2). Each position terminal goes to its respective signal wire (pins 5–9). Internal pull-ups in the Nano keep all signal lines HIGH; whichever position is selected pulls its line LOW through the switch. No external resistors needed anywhere in the switch circuit.
 
-| Pin | J3 Position | Signal | Panel Component |
-|---|---|---|---|
-| 1 | 1 | BTN_ECO | Preset 4 pushbutton (ECONOMY 2200) |
-| 2 | 2 | A0_WIPER | Panel pot wiper (continuous RPM control) |
-| 3 | 3 | POT_E | One end of panel pot (+5V reference) |
-| 4 | 4 | POT_F | Other end of panel pot (GND) |
-| 5 | 5 | GND | Ground |
-
-**Note:** BTN_LOW (Emergency/Coarse) is on Nano pin A1. Wire from J3 pin 1 or add a dedicated connector pin if your panel layout puts the button in a different position.
+**Note on SW_COMMON:** Pin 10 and Pin 2 are both GND — you can tie the switch common directly to pin 2 at the panel connector if that's easier, and leave pin 10 unused. The separate pin 10 just makes the wiring cleaner.
 
 ---
 
 ## Arduino Nano Pin Assignment
 
-For reference when troubleshooting or modifying firmware:
-
 | Nano Pin | Function | Direction | Notes |
 |---|---|---|---|
-| D2 | RPM_PULSE | Input | From 6N137 optocoupler output; hardware interrupt INT0 |
-| D3 | ENC_SW | Input | Encoder pushbutton; internal pull-up |
-| D4 | ENC_A | Input | Encoder channel A; internal pull-up |
-| D5 | ENC_B | Input | Encoder channel B; internal pull-up |
+| D2 | RPM_PULSE | Input | 6N137 optocoupler output; hardware interrupt INT0 |
+| D3 | SW_POS1 | Input | Rotary switch position 1 (MAX 2650); internal pull-up |
+| D4 | SW_POS2 | Input | Rotary switch position 2 (CRUISE CLIMB 2450); internal pull-up |
+| D5 | SW_POS3 | Input | Rotary switch position 3 (CRUISE 2300); internal pull-up |
 | D6 | INC_RELAY_DRIVE | Output | To ULN2003A IN1; energizes INC relay |
 | D7 | DEC_RELAY_DRIVE | Output | To ULN2003A IN2; energizes DEC relay |
-| D8 | INC_LED | Output | Red LED via 330Ω; visual indicator |
-| D9 | DEC_LED | Output | Green LED via 330Ω; visual indicator |
-| D10 | BTN_MAX | Input | Preset 1 (MAX 2650); internal pull-up |
-| D11 | BTN_CLIMB | Input | Preset 2 (CRUISE CLIMB 2450); internal pull-up |
-| D12 | BTN_CRUISE | Input | Preset 3 (CRUISE 2300); internal pull-up |
-| A0 | POT_WIPER | Analog Input | Panel potentiometer continuous control |
-| A1 | BTN_ECO | Input | Preset 4 (ECONOMY 2200); internal pull-up |
-| A4 | SDA | I2C | OLED display data |
-| A5 | SCL | I2C | OLED display clock |
+| D8 | INC_LED | Output | Red LED via 330Ω; INC activity indicator |
+| D9 | DEC_LED | Output | Green LED via 330Ω; DEC activity indicator |
+| D10 | SW_POS4 | Input | Rotary switch position 4 (ECONOMY 2200); internal pull-up |
+| D11 | SW_POS5 | Input | Rotary switch position 5 (LOW/EMERGENCY COARSE); internal pull-up |
+| D12 | (spare) | — | Available for future use |
+| A0 | (spare) | — | Available for future use |
+| A1 | (spare) | — | Available for future use |
+| A4 | SDA | I2C | OLED display data (Wire library) |
+| A5 | SCL | I2C | OLED display clock (Wire library) |
 | VIN | 5V_INPUT | Power | From LM2596 5V output |
 | GND | GND | Power | Multiple ground connections |
 
@@ -139,8 +129,8 @@ For IAs doing the 337 review, this table shows the complete equivalence of the e
 | B | Airframe ground | J1-B | GND | ✓ Identical |
 | C | INC RPM relay coil drive | J1-C | INC_RELAY_DRIVE | ✓ Identical behavior |
 | D | DEC RPM relay coil drive | J1-D | DEC_RELAY_DRIVE | ✓ Identical behavior |
-| E | Rheostat end 1 | J1-E | POT reference | ✓ Functionally equivalent |
-| F | Rheostat end 2 | J1-F | POT reference | ✓ Functionally equivalent |
+| E | Rheostat end 1 | J1-E | SW_COMMON (GND) | ✓ Functionally equivalent — switch common replaces rheostat end; GND is carried to panel |
+| F | Rheostat end 2 | J1-F | Spare / NC | ✓ Pin present; unused in rotary switch implementation |
 | H | Magneto P-lead sense | J1-H | MAG_P_LEAD (through 10kΩ isolator) | ✓ Identical; isolator preserved |
 
 The relay coil loads (current draw on C and D) are identical. The magneto input impedance is identical (10kΩ isolating resistor preserved in the new design). The power supply loading on pin A is lower (switching regulator vs. linear), which is a improvement. No airframe wiring changes are needed or permitted without additional 337 documentation.
