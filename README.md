@@ -81,7 +81,10 @@ bonanza-prop-governor/
 │   └── TROUBLESHOOTING.md       ← Fault codes, common issues
 ├── firmware/
 │   └── governor_350A/
-│       └── governor_350A.ino    ← Arduino sketch (fully commented)
+│       ├── README.md            ← Flashing guide, serial console, unit tests
+│       ├── governor_350A.ino    ← Arduino sketch (fully commented)
+│       ├── platformio.ini       ← PlatformIO build config (AVR + native test)
+│       └── test/                ← Unity unit tests (runs on desktop, no hardware)
 └── hardware/
     ├── 350A_governor.kicad_pcb  ← KiCad PCB file (open in KiCad 7+)
     ├── 350A_governor_JLCPCB.zip ← Ready-to-upload Gerber package for JLCPCB
@@ -95,7 +98,7 @@ bonanza-prop-governor/
 1. **Order the PCB** — Upload `hardware/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
 2. **Order components** — See [hardware/BOM.md](hardware/BOM.md). Total ~$55–95 for a complete build.
 3. **Assemble** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md). All through-hole components; no SMD soldering.
-4. **Flash firmware** — Open `firmware/governor_350A/governor_350A.ino` in Arduino IDE. Set `PULSES_PER_REV` for your engine. Flash to the Nano before installing.
+4. **Flash firmware** — See [firmware/governor_350A/README.md](firmware/governor_350A/README.md) for full instructions (Arduino IDE, PlatformIO, and CLI). Set `PULSES_PER_REV` for your engine before flashing.
 5. **Bench test** — Build the test harness described in [docs/BENCH_TEST.md](docs/BENCH_TEST.md) and verify operation before touching the aircraft.
 6. **Install** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md) aircraft installation section. Have your IA present.
 
