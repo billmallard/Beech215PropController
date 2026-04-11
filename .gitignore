@@ -1,0 +1,6 @@
+# PlatformIO build artifacts
+.pio/
+
+# MSVC build artifacts
+*.obj
+*.exe

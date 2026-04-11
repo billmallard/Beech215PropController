@@ -144,18 +144,6 @@ bool displayOK = false;
 
 
 // =============================================================================
-// INTERRUPT SERVICE ROUTINE — MAGNETO PULSE
-// =============================================================================
-
-ISR(INT0_vect) {
-  uint32_t now = micros();
-  if (lastPulseTime_us > 0) pulseInterval_us = now - lastPulseTime_us;
-  lastPulseTime_us = now;
-  newPulse = true;
-}
-
-
-// =============================================================================
 // RPM MEASUREMENT
 // =============================================================================
 
