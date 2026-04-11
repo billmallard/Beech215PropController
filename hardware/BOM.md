@@ -5,6 +5,15 @@ Links are to Digi-Key where possible — they're reliable, stock everything, and
 
 **Estimated total cost: $55–95** depending on sourcing (Amazon vs. Digi-Key, bulk vs. singles)
 
+## Shared Shopping Lists
+
+These prebuilt lists cover most parts in this BOM and can be used as a starting point:
+
+- Shopping List 1 (Amazon): https://www.amazon.com/hz/wishlist/ls/3DMPSATPTDYP0
+- Shopping List 2 (Digi-Key): https://www.digikey.com/en/mylists/list/NWO46GHP9C
+
+Review quantities and exact part variants before checkout.
+
 ---
 
 ## PCB
@@ -130,10 +139,14 @@ All resistors: 1/4W metal film, 1% tolerance
 ### Digi-Key single order (all board passives + ICs):
 6N137 × 1, ULN2003A × 1, 10kΩ resistor × 1, 4.7kΩ × 1, 330Ω × 2, 100nF cap × 3, 100µF cap × 1, 47µF cap × 1, DIP-8 socket × 1, DIP-16 socket × 1
 
+Use Shopping List 2 for a prebuilt Digi-Key cart: https://www.digikey.com/en/mylists/list/NWO46GHP9C
+
 **Estimated Digi-Key subtotal: ~$12–18**
 
 ### Amazon or eBay (modules and panels):
 Arduino Nano × 1, LM2596-5V module × 1, SSD1306 OLED 1.3" × 1, LED assortment (red + green 3mm) × 1, pin header strips × 1, female socket strips × 1
+
+Use Shopping List 1 for the common Amazon items: https://www.amazon.com/hz/wishlist/ls/3DMPSATPTDYP0
 
 **Estimated Amazon subtotal: ~$18–28**
 
