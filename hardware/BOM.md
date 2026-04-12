@@ -38,9 +38,12 @@ Review quantities and exact part variants before checkout.
 |---|---|---|---|---|---|
 | A1 | Arduino Nano (ATmega328P) | Microcontroller | — | 1 | $4–8 | Buy the CH340 version (most common on Amazon/eBay). Avoid Nano Every — different pinout. |
 | U1 | 6N137 | High-speed optocoupler | 516-2878-5-ND | 1 | $0.60 | DIP-8. Do not substitute 4N25/4N35 — too slow for mag pulses. |
-| U2 | ULN2003A | Darlington relay driver array | 296-18992-5-ND | 1 | $0.45 | DIP-16. |
+| Q1, Q2 | 2N2907A | PNP transistor, TO-92 — relay high-side switch | 2N2907A-TPMSCT-ND | 2 | $0.30 | One per relay channel. Emitter to +12V; collector to J1-C/D. |
+| Q3, Q4 | 2N2222A | NPN transistor, TO-92 — level shifter | 2N2222ACS-ND | 2 | $0.30 | One per relay channel. Driven by Nano; collector drives PNP base. |
 | PS1 | LM2596S-5V Module | DC-DC 5V switching regulator | — | 1 | $1–3 | Pre-built module. **Must be labeled "5V" not adjustable.** Verify output before installing. Available on Amazon, 10-packs for $8. |
 | OLED | SSD1306 1.3" OLED | I2C display 128×64 | — | 1 | $6–10 | Must be I2C (2-wire), 128×64. Many on Amazon. Verify module is 4-pin (VCC/GND/SCL/SDA). |
+
+**Note on relay driver design:** The original design used a ULN2003A NPN Darlington array, which is a **low-side switch**. The Bonanza's relay coil wiring is high-side driven (governor supplies +12V to relay coil; coil's other end goes through a pitch-limit switch to ground). The ULN2003A is incompatible — it has been replaced by a discrete NPN+PNP high-side switch circuit (Q1/Q2 + Q3/Q4). See `docs/WIRING.md` for the schematic explanation.
 
 ---
 
@@ -53,6 +56,8 @@ All resistors: 1/4W metal film, 1% tolerance
 | R1 | 10kΩ | 10KEBK-ND | 1 | Magneto input current limit |
 | R2 | 4.7kΩ | 4.7KEBK-ND | 1 | Optocoupler pull-up |
 | R3, R4 | 330Ω | 330EBK-ND | 2 | LED current limiters |
+| R5, R6 | 1kΩ | 1.0KEBK-ND | 2 | NPN base resistors (Nano pin → Q3/Q4 base) |
+| R7, R8 | 10kΩ | 10KEBK-ND | 2 | PNP base pull-up (+12V → Q3/Q4 collector / Q1/Q2 base); ensures relay is off at power-on |
 
 ---
 
@@ -72,6 +77,7 @@ All resistors: 1/4W metal film, 1% tolerance
 |---|---|---|---|---|
 | D1 | 3mm Red LED | 754-1264-ND | 1 | Standard brightness; INC indicator |
 | D2 | 3mm Green LED | 754-1221-ND | 1 | Standard brightness; DEC indicator |
+| D3, D4 | 1N4001 | 1N4001FSCT-ND | 2 | Flyback diodes — relay coil spike protection. Install on PCB across J1-C to J1-A and J1-D to J1-A, **cathode toward J1-A (+12V)**. Clamps the inductive spike when PNP turns off. Do not omit. |
 
 ---
 
@@ -80,7 +86,6 @@ All resistors: 1/4W metal film, 1% tolerance
 | Ref | Part | Qty | Notes |
 |---|---|---|---|
 | — | DIP-8 socket | 1 | For U1 (6N137). Use machined-pin (turned-pin) type for reliability. |
-| — | DIP-16 socket | 1 | For U2 (ULN2003A). Same. |
 | — | 15-pin female single-row socket strip | 2 | For Arduino Nano. Cut to length or buy pre-cut Nano socket kit. |
 | J1 | 1×7 2.54mm male header | 1 | 7-pin; or cut from 40-pin strip |
 | J2 | 1×10 2.54mm male header | 1 | 10-pin; or cut from 40-pin strip |
@@ -137,7 +142,7 @@ All resistors: 1/4W metal film, 1% tolerance
 ## Complete Order Summary
 
 ### Digi-Key single order (all board passives + ICs):
-6N137 × 1, ULN2003A × 1, 10kΩ resistor × 1, 4.7kΩ × 1, 330Ω × 2, 100nF cap × 3, 100µF cap × 1, 47µF cap × 1, DIP-8 socket × 1, DIP-16 socket × 1
+6N137 × 1, 2N2907A × 2, 2N2222A × 2, 1N4001 × 2, 10kΩ resistor × 3, 4.7kΩ × 1, 1kΩ × 3, 330Ω × 2, 100nF cap × 3, 100µF cap × 1, 47µF cap × 1, DIP-8 socket × 1
 
 Use Shopping List 2 for a prebuilt Digi-Key cart: https://www.digikey.com/en/mylists/list/NWO46GHP9C
 
