@@ -62,8 +62,8 @@
 #define PIN_SW_POS1     3   // Rotary switch position 1: MAX (2650)
 #define PIN_SW_POS2     4   // Rotary switch position 2: CRUISE CLIMB (2450)
 #define PIN_SW_POS3     5   // Rotary switch position 3: CRUISE (2300)
-#define PIN_INC_RELAY   6   // ULN2003A IN1 -> INC RPM relay (fine pitch)
-#define PIN_DEC_RELAY   7   // ULN2003A IN2 -> DEC RPM relay (coarse pitch)
+#define PIN_INC_RELAY   6   // NPN base (via 1kΩ) -> PNP high-side switch -> INC RPM relay (fine pitch)
+#define PIN_DEC_RELAY   7   // NPN base (via 1kΩ) -> PNP high-side switch -> DEC RPM relay (coarse pitch)
 #define PIN_INC_LED     8   // Red LED — INC activity indicator
 #define PIN_DEC_LED     9   // Green LED — DEC activity indicator
 #define PIN_SW_POS4     10  // Rotary switch position 4: ECONOMY (2200)
@@ -533,7 +533,7 @@ void setup() {
   Serial.print("PULSES_PER_REV="); Serial.println(PULSES_PER_REV);
   Serial.print("RAMP_RATE="); Serial.print(RAMP_RATE_RPM_PER_SEC); Serial.println(" RPM/sec");
 
-  // Output pins
+  // Output pins — relay channels drive NPN+PNP high-side switches; HIGH = relay on
   pinMode(PIN_INC_RELAY, OUTPUT); digitalWrite(PIN_INC_RELAY, LOW);
   pinMode(PIN_DEC_RELAY, OUTPUT); digitalWrite(PIN_DEC_RELAY, LOW);
   pinMode(PIN_INC_LED,   OUTPUT); digitalWrite(PIN_INC_LED,   LOW);
