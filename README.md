@@ -131,6 +131,26 @@ Please open an issue before starting significant work so efforts aren't duplicat
 
 ---
 
+## Security
+
+This repository uses layered secret-prevention controls. See [SECURITY.md](SECURITY.md) for the full policy including vulnerability reporting and incident response steps.
+
+| Layer | Tool | Trigger |
+|---|---|---|
+| Local pre-commit | `tools/security/scan_secrets.py` | Every `git commit` (staged files) |
+| CI — SAST | CodeQL (C/C++ + Python) | Push, PR, weekly |
+| CI — Secret scan | Gitleaks | Push, PR, weekly (full history) |
+
+**Quick setup after cloning:**
+```
+pip install pre-commit
+pre-commit install
+```
+
+Recommended GitHub repository settings: enable **Secret scanning**, **Push protection**, and **Dependabot** (Settings → Security).
+
+---
+
 ## License
 
 MIT License. See LICENSE file. This hardware and firmware may be freely built, modified, and used for personal aircraft. Commercial reproduction or sale requires separate arrangement.

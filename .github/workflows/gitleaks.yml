@@ -1,0 +1,33 @@
+name: Gitleaks — Secret Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Weekly scan every Monday at 07:00 UTC (offset from CodeQL to spread load)
+    - cron: '0 7 * * 1'
+
+jobs:
+  scan:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # Required for gitleaks-action to post PR annotations
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository (full history for historical scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set GITLEAKS_LICENSE only if you are using Gitleaks Enterprise.
+          # A free OSS licence is sufficient for public repos.

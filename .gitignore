@@ -4,3 +4,21 @@
 # MSVC build artifacts
 *.obj
 *.exe
+
+# Secrets and credentials — never commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+secrets.yaml
+secrets.yml
+secrets.json
+*_secret*
+*_credentials*
+aws_credentials
+.aws/
+*.keystore

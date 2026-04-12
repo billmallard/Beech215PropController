@@ -1,0 +1,23 @@
+# .pre-commit-config.yaml
+#
+# Uses language: system so pre-commit calls the Python already in PATH
+# rather than creating an isolated virtualenv via a remote repo URI.
+# This avoids common breakage with Python 3.13 Windows Store installs
+# where virtualenv creation in %LOCALAPPDATA%\Packages\... paths fails.
+#
+# Install pre-commit once:   pip install pre-commit
+# Activate hooks:            pre-commit install
+# Run manually on all files: pre-commit run --all-files
+#
+repos:
+  - repo: local
+    hooks:
+      - id: scan-secrets
+        name: Scan staged files for secrets
+        language: system
+        entry: python tools/security/scan_secrets.py
+        # Run on every text file that is staged; pass filenames as arguments.
+        types: [text]
+        pass_filenames: true
+        # Re-run on every staged change, not just first-time additions.
+        always_run: false
