@@ -51,8 +51,8 @@ A single 10-conductor shielded cable connects the panel unit to the governor box
 | D3 | SW_POS1 | Input | Rotary switch position 1 (MAX 2650); internal pull-up |
 | D4 | SW_POS2 | Input | Rotary switch position 2 (CRUISE CLIMB 2450); internal pull-up |
 | D5 | SW_POS3 | Input | Rotary switch position 3 (CRUISE 2300); internal pull-up |
-| D6 | INC_RELAY_DRIVE | Output | To ULN2003A IN1; energizes INC relay |
-| D7 | DEC_RELAY_DRIVE | Output | To ULN2003A IN2; energizes DEC relay |
+| D6 | INC_RELAY_DRIVE | Output | To PNP transistor base (via 1kΩ); high-side switches +12V to INC relay coil |
+| D7 | DEC_RELAY_DRIVE | Output | To PNP transistor base (via 1kΩ); high-side switches +12V to DEC relay coil |
 | D8 | INC_LED | Output | Red LED via 330Ω; INC activity indicator |
 | D9 | DEC_LED | Output | Green LED via 330Ω; DEC activity indicator |
 | D10 | SW_POS4 | Input | Rotary switch position 4 (ECONOMY 2200); internal pull-up |
@@ -127,10 +127,12 @@ For IAs doing the 337 review, this table shows the complete equivalence of the e
 |---|---|---|---|---|
 | A | 12V supply input | J1-A | 12V_RAW | ✓ Identical |
 | B | Airframe ground | J1-B | GND | ✓ Identical |
-| C | INC RPM relay coil drive | J1-C | INC_RELAY_DRIVE | ✓ Identical behavior |
-| D | DEC RPM relay coil drive | J1-D | DEC_RELAY_DRIVE | ✓ Identical behavior |
+| C | INC RPM relay coil drive | J1-C | INC_RELAY_DRIVE | ✓ Equivalent — see note below |
+| D | DEC RPM relay coil drive | J1-D | DEC_RELAY_DRIVE | ✓ Equivalent — see note below |
 | E | Rheostat end 1 | J1-E | SW_COMMON (GND) | ✓ Functionally equivalent — switch common replaces rheostat end; GND is carried to panel |
 | F | Rheostat end 2 | J1-F | Spare / NC | ✓ Pin present; unused in rotary switch implementation |
 | H | Magneto P-lead sense | J1-H | MAG_P_LEAD (through 10kΩ isolator) | ✓ Identical; isolator preserved |
 
 The relay coil loads (current draw on C and D) are identical. The magneto input impedance is identical (10kΩ isolating resistor preserved in the new design). The power supply loading on pin A is lower (switching regulator vs. linear), which is a improvement. No airframe wiring changes are needed or permitted without additional 337 documentation.
+
+**Note on J1-C and J1-D relay drive polarity:** The original 350A is a **high-side driver** — it switches +12V onto pins C and D to energize the relay coils. The relay circuits in the aircraft are wired with the coil's cold side grounded through the pitch-limit switches, so the hot side (+12V) must be switched by the governor. The new board uses **PNP transistors** (one per relay channel) as high-side switches, providing the same +12V-switched output on J1-C and J1-D. The NPN ULN2003A Darlington array found in many Arduino relay tutorials is **not compatible** with this wiring — it provides a ground-side switch, which is the wrong topology for this circuit.
