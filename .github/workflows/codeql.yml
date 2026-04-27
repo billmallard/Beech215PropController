@@ -37,6 +37,10 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install arduino:avr
 
+      - name: Install required libraries
+        run: |
+          arduino-cli lib install "Adafruit GFX Library" "Adafruit SSD1306"
+
       - name: Build Arduino sketch
         run: |
           # atmega328old = genuine Nano with old bootloader (most common clone)
