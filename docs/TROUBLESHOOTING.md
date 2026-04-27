@@ -41,7 +41,7 @@
 
 1. Verify AUTO switch is in correct position and 12V present at J1 Pin A
 2. Check Nano D6 and D7 with multimeter — should show 5V when error exceeds deadband
-3. Check U2 (ULN2003A) is seated — pin 1 notch at correct orientation
+3. Check transistors Q1–Q4: verify flat-body orientation matches PCB silkscreen; inspect solder joints on all three leads of each device
 4. Check J1 pins C and D with multimeter — should show 12V when governor is commanding correction
 5. If C and D have 12V but motor doesn't run: airframe relay issue, not the governor
 
@@ -73,7 +73,7 @@ This is the problem this controller was designed to fix. If hunting persists aft
 1. Verify button wiring to correct Nano pins (D10, D11, D12, A1)
 2. Buttons should connect the Nano pin to GND — firmware uses internal pull-ups
 3. Check continuity across button contacts with multimeter in beep mode
-4. Verify J2 and J3 connector seating
+4. Verify J2 connector seating
 
 ### Problem: OLED shows correct SET but incorrect ACT RPM
 

@@ -44,9 +44,9 @@ When your JLCPCB boards arrive (you'll receive 5 — use one, keep the rest):
 - Verify the board dimensions are 100mm × 80mm
 - Confirm 4 mounting holes in the corners
 
-### 1.2 One-Time KiCad Zone Fill Step
+### 1.2 Production Gerbers
 
-The Gerbers were generated without the GND copper pour filled (a limitation of the scripted generation). Before your first build, you should open `hardware/350A_governor.kicad_pcb` in KiCad 7, go to **Edit → Fill All Zones** (shortcut: B), run DRC to confirm no violations, then regenerate Gerbers for any future orders. For your first board, the unfilled version works — the GND pour just adds noise immunity and heat sinking; the explicit GND traces and vias handle connectivity.
+The Gerbers in `hardware/gerbers/350A_governor_JLCPCB.zip` are ready to upload to JLCPCB. They were generated from the current V3 PCB with copper zones filled and 0 DRC violations — no additional KiCad steps are required before ordering.
 
 ---
 
@@ -62,6 +62,8 @@ The Gerbers were generated without the GND copper pour filled (a limitation of t
 | R2 | 4.7kΩ | Yel-Vio-Red-Gold | Optocoupler pull-up |
 | R3 | 330Ω | Org-Org-Brn-Gold | INC LED current limit |
 | R4 | 330Ω | Org-Org-Brn-Gold | DEC LED current limit |
+| R5, R6 | 1kΩ | Brn-Blk-Red-Gold | NPN base resistors (Q3, Q4) |
+| R7, R8 | 10kΩ | Brn-Blk-Org-Gold | PNP base pull-ups (Q1, Q2) |
 
 Resistors are non-polarized — orientation doesn't matter. Bend leads at 90°, insert, tape or bend leads slightly to hold in place, solder, trim leads flush.
 
@@ -82,7 +84,7 @@ Ceramic caps are non-polarized. The "104" marking means 10 × 10⁴ pF = 100nF =
 | Ref | Value | Location | Notes |
 |---|---|---|---|
 | C2 | 100µF / 25V | LM2596 input | Longer lead = POSITIVE. Stripe on body = NEGATIVE. |
-| C3 | 47µF / 16V | LM2596 output | Same polarity convention. |
+| C3 | 47µF / 10V | LM2596 output | Same polarity convention. |
 
 ⚠️ **Electrolytic capacitors installed backwards will fail, possibly violently.** The PCB has a "+" marking on the positive pad. The longer lead goes to "+". The stripe on the capacitor body marks the NEGATIVE lead.
 
@@ -97,18 +99,39 @@ LEDs are polarized. The **longer lead is the anode (+)**. The flat side of the L
 
 Install these so the lens is just above the PCB surface. Do not push them all the way flush — they will be visible indicators during testing.
 
-### 2.5 IC Sockets (install before ICs)
+### 2.5 Transistors (Q1–Q4)
+
+The relay driver circuit uses two NPN+PNP transistor pairs — all TO-92 package, about the same size as a small LED.
+
+| Ref | Part | Type | Notes |
+|---|---|---|---|
+| Q1, Q2 | 2N2907A | PNP — high-side switch | TO-92L (wide body). Switches +12V to relay coil. |
+| Q3, Q4 | 2N2222A | NPN — level shifter | Standard TO-92. Driven by Nano D6/D7 (5V logic). |
+
+**Pin orientation (critical):** Facing the flat side of the TO-92 body, pin order is **E – B – C** left to right for both types. The PCB silkscreen shows the flat body side — match it.
+
+**2N2907A package note:** The PCB footprint is TO-92L (wide/plastic body). Do not use the TO-18 metal-can variant — the lead spacing is incompatible.
+
+### 2.6 Protection Diodes and Fuse
+
+| Ref | Part | Notes |
+|---|---|---|
+| D3, D4 | 1N4001 | Flyback diodes — **cathode (banded end) toward +12V**. Clamps relay coil inductive spikes. Do not omit. |
+| F1 | 1A PTC fuse | In series with 12V_RAW input. Self-resets after overcurrent. Observe orientation per silkscreen. |
+
+⚠️ **D3/D4 polarity:** Cathode (silver band) goes toward the +12V_RAW side of each relay coil pad. Reversed diodes do not protect the transistors from inductive kickback.
+
+### 2.7 IC Sockets (install before ICs)
 
 **Install sockets, not the ICs directly.** This allows replacement without desoldering.
 
 | Ref | Socket | Notes |
 |---|---|---|
 | U1 | DIP-8 socket | For 6N137 optocoupler |
-| U2 | DIP-16 socket | For ULN2003A |
 
 Align the notch on the socket with the notch shown on the PCB silkscreen. Solder one corner pin first, verify alignment, then solder remaining pins.
 
-### 2.6 Connectors and Headers
+### 2.8 Connectors and Headers
 
 Install these before the Arduino socket — they need the iron to get in from the sides.
 
@@ -126,10 +149,7 @@ Install these before the Arduino socket — they need the iron to get in from th
 - 1×10 2.54mm pin header or socket
 - Connects to the panel unit cable
 
-**J3 — Panel Connector 2 (5-pin):**
-- 1×5 2.54mm pin header or socket
-
-### 2.7 Arduino Nano Socket
+### 2.9 Arduino Nano Socket
 
 Use two 15-pin female socket strips (or a 30-pin strip cut in half). This lets you remove the Nano for firmware updates without disturbing the installation.
 
@@ -137,20 +157,19 @@ Use two 15-pin female socket strips (or a 30-pin strip cut in half). This lets y
 - The Nano plugs in from above
 - Verify orientation: the USB port end of the Nano faces toward the top of the board (toward J1)
 
-### 2.8 IC Installation
+### 2.10 IC Installation
 
 Once all soldering is complete and you've done the pre-power inspection (Section 4.1):
 
 - **U1 (6N137):** Align pin 1 (notch end) with pin 1 on socket. Press firmly and evenly.
-- **U2 (ULN2003A):** Same — notch toward top of board.
 
-### 2.9 LM2596 5V Module
+### 2.11 LM2596 5V Module
 
 The LM2596S-5V is a pre-built DC-DC converter module. It should arrive pre-set to 5V output, but **verify this before plugging it in** (see Section 4.2).
 
 Plug into PS1 header. The module sits about 10mm above the PCB.
 
-### 2.10 Arduino Nano
+### 2.12 Arduino Nano
 
 Flash the firmware BEFORE installing in the board (easier to handle). See Section 3.
 
@@ -402,6 +421,7 @@ Follow the Ground Test section of the original 350A manual (reproduced in the fi
 | Rev | Date | Changes |
 |---|---|---|
 | 1.0 | Initial release | First production version |
+| 3.0 | 2026-04-27 | V3 PCB: ULN2003A (U2) replaced by discrete NPN+PNP transistor pairs (Q1–Q4); added flyback diodes D3/D4 and PTC fuse F1; J3 removed; C3 changed to 10V rating; added R5–R8 |
 
 ---
 

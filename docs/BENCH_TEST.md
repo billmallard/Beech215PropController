@@ -279,7 +279,7 @@ If you have an oscilloscope, these are the waveforms to expect at key test point
 **Relays won't energize:**
 - Check J1 pins C and D for 12V output when RPM error is present (multimeter)
 - If 12V present but relay doesn't click: relay coil circuit issue, not the board's problem
-- Verify ULN2003A is seated correctly
+- Check transistors Q1–Q4: verify flat-body orientation matches silkscreen, inspect solder joints on all three leads of each device
 
 **Motor runs in wrong direction:**
 - INC and DEC relay outputs are swapped
