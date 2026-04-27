@@ -1,3 +1,6 @@
+# VSCode Local History extension
+.history/
+
 # PlatformIO build artifacts
 .pio/
 
