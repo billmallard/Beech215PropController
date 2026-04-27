@@ -1,0 +1,28 @@
+﻿pos_x,pos_y,rotation,side,designator,mpn,pack,footprint,value,mount_type
+131.27,-70.96,0.0,top,A1,,,Arduino_Nano,Arduino_Nano_v3.x,tht
+97.0,-69.28,0.0,top,C1,,,C_Disc_D3.8mm_W2.6mm_P2.50mm,100nF,tht
+98.26,-84.754888,-90.0,top,C2,,,CP_Radial_D5.0mm_P2.50mm,100uF/25V,tht
+169.97,-60.675112,90.0,top,C3,,,C_Disc_D3.8mm_W2.6mm_P2.50mm,47uF/10V,tht
+149.9,-77.27,90.0,top,C4,,,C_Disc_D3.8mm_W2.6mm_P2.50mm,100nF,tht
+107.01,-54.3,0.0,top,C5,,,C_Disc_D3.8mm_W2.6mm_P2.50mm,100nF,tht
+121.77,-115.97,90.0,top,D1,,,LED_D3.0mm,Red LED,tht
+126.4,-115.975,90.0,top,D2,,,LED_D3.0mm,Green LED,tht
+103.28,-76.44,0.0,top,D3,,,D_DO-41_SOD81_P10.16mm_Horizontal,1N4001,tht
+113.74,-107.1,180.0,top,D4,,,D_DO-41_SOD81_P10.16mm_Horizontal,1N4001,tht
+91.57,-80.97,90.0,top,F1,,,Fuse_BelFuse_0ZRE0012FF_L8.3mm_W3.8mm,1A PTC,tht
+92.2,-85.19,0.0,top,J1,,,PinHeader_1x07_P2.54mm_Vertical,CANNON_7PIN,tht
+177.03,-88.07,0.0,top,J2,,,PinHeader_1x10_P2.54mm_Vertical,PANEL_10PIN,tht
+174.77,-54.84,0.0,top,PS1,,,PinHeader_1x05_P2.54mm_Vertical,LM2596-5V,tht
+106.56,-86.7,90.0,top,Q1,,,TO18,2N2907A,tht
+106.61,-94.51,-90.0,top,Q2,,,TO18,2N2907A,tht
+114.49,-84.97,0.0,top,Q3,,,TO92254P470H750-3,2N2222A,tht
+114.42,-96.65,0.0,top,Q4,,,TO92254P470H750-3,2N2222A,tht
+97.09,-100.42,0.0,top,R1,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,10k,tht
+107.67,-58.31,-90.0,top,R2,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,4k7,tht
+121.75,-103.36,-90.0,top,R3,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,330R,tht
+126.31,-103.475,-90.0,top,R4,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,330R,tht
+124.66,-91.17,180.0,top,R5,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,1k,tht
+124.68,-94.33,180.0,top,R6,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,1k,tht
+111.9,-81.22,180.0,top,R7,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,10k,tht
+111.02,-102.92,0.0,top,R8,,,R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal,10k,tht
+97.01,-58.3,0.0,top,U1,,,DIP-8_W7.62mm,6N137,tht
