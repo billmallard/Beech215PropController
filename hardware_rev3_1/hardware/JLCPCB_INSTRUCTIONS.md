@@ -5,7 +5,7 @@ The board is fully routed. Use the Gerber zip in the `pcbway_production/` folder
 ## Steps
 
 1. Open [jlcpcb.com](https://jlcpcb.com) and click **Order Now**
-2. Upload `pcbway_production/2026-04-27-04-14-28/350A_governor.kicad_pcb_gerber.zip`
+2. Upload `gerbers/350A_governor_JLCPCB.zip`
 3. Confirm the settings below and add to cart
 
 ## JLCPCB Settings
