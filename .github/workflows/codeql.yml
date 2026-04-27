@@ -11,25 +11,13 @@ on:
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
+    name: Analyze (c-cpp)
     runs-on: ubuntu-latest
 
     permissions:
       security-events: write
       actions: read
       contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Python autobuild works out of the box
-          - language: python
-            build-mode: autobuild
-          # Arduino .ino files have no Makefile/CMake, so autobuild fails.
-          # We drive the build manually with arduino-cli instead.
-          - language: c-cpp
-            build-mode: manual
 
     steps:
       - name: Checkout repository
@@ -38,29 +26,18 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
+          languages: c-cpp
           queries: security-and-quality
 
-      # ── Python: let autobuild handle it ─────────────────────────────────────
-      - name: Autobuild (Python)
-        if: matrix.build-mode == 'autobuild'
-        uses: github/codeql-action/autobuild@v3
-
-      # ── C/C++ (Arduino): manual build via arduino-cli ───────────────────────
       - name: Install Arduino CLI
-        if: matrix.build-mode == 'manual'
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "$HOME/bin" >> "$GITHUB_PATH"
+        uses: arduino/setup-arduino-cli@v2
 
       - name: Install AVR platform
-        if: matrix.build-mode == 'manual'
         run: |
           arduino-cli core update-index
           arduino-cli core install arduino:avr
 
       - name: Build Arduino sketch
-        if: matrix.build-mode == 'manual'
         run: |
           # atmega328old = genuine Nano with old bootloader (most common clone)
           arduino-cli compile \
@@ -70,4 +47,4 @@ jobs:
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:${{ matrix.language }}"
+          category: "/language:c-cpp"
