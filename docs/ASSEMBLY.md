@@ -116,10 +116,12 @@ The relay driver circuit uses two NPN+PNP transistor pairs — all TO-92 package
 
 | Ref | Part | Notes |
 |---|---|---|
-| D3, D4 | 1N4001 | Flyback diodes — **cathode (banded end) toward +12V**. Clamps relay coil inductive spikes. Do not omit. |
+| D3, D4 | 1N4001 | Flyback diodes — **cathode (banded end) toward the relay output pad, marked "K" on the silkscreen**. Each diode sits across its relay coil circuit: cathode to the INC/DEC output, anode to ground. Do not omit. |
 | F1 | 1A PTC fuse | In series with 12V_RAW input. Self-resets after overcurrent. Observe orientation per silkscreen. |
 
-⚠️ **D3/D4 polarity:** Cathode (silver band) goes toward the +12V_RAW side of each relay coil pad. Reversed diodes do not protect the transistors from inductive kickback.
+⚠️ **D3/D4 polarity:** Cathode (silver band) goes to the relay output side — match the "K" mark on the Rev 3.2 silkscreen. A reversed diode conducts DC through the relay coil and will blow the fuse or burn the diode.
+
+> **Building on a Rev 3 / Rev 3.1 board?** (No "REV 3.2" marking at bottom center of the board.) Those boards place D3/D4 across the drive transistors instead of across the relay coils, which provides no flyback clamping — the relay turn-off spike avalanches the semiconductors and radiates into the aircraft harness. Do not populate D3/D4 in their printed positions; follow [REWORK_FLYBACK_DIODES.md](REWORK_FLYBACK_DIODES.md) instead.
 
 ### 2.7 IC Sockets (install before ICs)
 
@@ -422,6 +424,7 @@ Follow the Ground Test section of the original 350A manual (reproduced in the fi
 |---|---|---|
 | 1.0 | Initial release | First production version |
 | 3.0 | 2026-04-27 | V3 PCB: ULN2003A (U2) replaced by discrete NPN+PNP transistor pairs (Q1–Q4); added flyback diodes D3/D4 and PTC fuse F1; J3 removed; C3 changed to 10V rating; added R5–R8 |
+| 3.2 | 2026-07-25 | Flyback diodes D3/D4 relocated from across the 2N2907A transistors to across the relay coil circuits (cathode to relay output, anode to ground) per flight-test engineering feedback — the previous placement provided no clamping of the negative turn-off spike. 12V rail rerouted around D3. "REV 3.2" silkscreen added for board identification. Existing Rev 3/3.1 boards: see [REWORK_FLYBACK_DIODES.md](REWORK_FLYBACK_DIODES.md) |
 
 ---
 

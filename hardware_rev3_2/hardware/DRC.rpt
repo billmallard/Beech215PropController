@@ -1,0 +1,29 @@
+** Drc report for 350A_governor.kicad_pcb **
+** Created on 2026-07-25T11:13:52 **
+** Report includes: Errors, Warnings, Exclusions **
+
+** Found 0 DRC violations **
+
+** Found 0 unconnected pads **
+
+** Found 2 Footprint errors **
+[footprint_symbol_mismatch]: LED_D3.0mm doesn't match footprint given by symbol ()
+    Local override; warning
+    @(121.7700 mm, 115.9700 mm): Footprint D1
+[footprint_symbol_mismatch]: LED_D3.0mm doesn't match footprint given by symbol ()
+    Local override; warning
+    @(126.4000 mm, 115.9750 mm): Footprint D2
+
+** Ignored checks **
+    - Via is not connected or connected on only one layer
+    - Footprint has no courtyard defined
+    - Track endpoint not centered on via
+    - Tuning profile track geometries
+    - Footprint doesn't match symbol's footprint filters
+    - Isolated copper fill
+    - PTH inside courtyard
+    - NPTH inside courtyard
+    - Footprint component type doesn't match footprint pads
+    - Footprint doesn't match copy in library
+
+** End of Report **

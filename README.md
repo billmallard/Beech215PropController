@@ -55,9 +55,12 @@ The system consists of two units:
 **Governor Box** (replaces the 350A housing, mounts in the same location):
 - Arduino Nano (ATmega328P)
 - 6N137 optocoupler (galvanic isolation of magneto P-lead)
-- ULN2003A Darlington array (relay driver)
+- 2N2222A + 2N2907A high-side relay drivers (NPN level shifter + PNP switch per channel)
+- 1N4001 flyback diodes across each relay coil circuit
 - LM2596S-5V DC-DC switching regulator
 - Supporting passives
+
+Current hardware revision: **3.2** (2026-07-25 — flyback diode placement corrected per flight-test feedback; boards are marked "REV 3.2" on the silkscreen). If you built an earlier Rev 3/3.1 board, see [docs/REWORK_FLYBACK_DIODES.md](docs/REWORK_FLYBACK_DIODES.md).
 
 **Panel Unit** (replaces the knob/rheostat assembly):
 - SSD1306 1.3" OLED display (128×64, I2C)
@@ -71,32 +74,42 @@ The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at
 ## Repository Structure
 
 ```
-bonanza-prop-governor/
-├── README.md                    ← You are here
+Beech215PropController/
+├── README.md                        ← You are here
 ├── docs/
-│   ├── ASSEMBLY.md              ← Step-by-step build instructions
-│   ├── BENCH_TEST.md            ← Ground test procedure before aircraft installation
-│   ├── WIRING.md                ← Connector pinout and wiring reference
-│   ├── REGULATORY.md            ← FAA owner-produced parts guidance, 337 language
-│   └── TROUBLESHOOTING.md       ← Fault codes, common issues
+│   ├── ASSEMBLY.md                  ← Step-by-step build instructions
+│   ├── BENCH_TEST.md                ← Ground test procedure before aircraft installation
+│   ├── WIRING.md                    ← Connector pinout and wiring reference
+│   ├── REGULATORY.md                ← FAA owner-produced parts guidance, 337 language
+│   ├── TROUBLESHOOTING.md           ← Fault codes, common issues
+│   ├── REWORK_FLYBACK_DIODES.md     ← Mandatory rework for Rev 3/3.1 boards
+│   └── original_350A/               ← Scanned original Airborne Electronics documentation
 ├── firmware/
 │   └── governor_350A/
-│       ├── README.md            ← Flashing guide, serial console, unit tests
-│       ├── governor_350A.ino    ← Arduino sketch (fully commented)
-│       ├── platformio.ini       ← PlatformIO build config (AVR + native test)
-│       └── test/                ← Unity unit tests (runs on desktop, no hardware)
-└── hardware/
-    ├── 350A_governor.kicad_pcb  ← KiCad PCB file (open in KiCad 7+)
-    ├── 350A_governor_JLCPCB.zip ← Ready-to-upload Gerber package for JLCPCB
-    └── BOM.md                   ← Bill of materials with part numbers and sources
+│       ├── README.md                ← Flashing guide, serial console, unit tests
+│       ├── governor_350A.ino        ← Arduino sketch (fully commented)
+│       ├── platformio.ini           ← PlatformIO build config (AVR + native test)
+│       └── test/                    ← Unity unit tests (runs on desktop, no hardware)
+├── hardware_rev3_2/                 ← CURRENT hardware revision
+│   ├── REV3_2_CHANGES.md            ← What changed in 3.2 and why, with verification evidence
+│   ├── board_top.png / board_bottom.png
+│   └── hardware/
+│       ├── 350A_governor.kicad_sch  ← Schematic (KiCad 10)
+│       ├── 350A_governor.kicad_pcb  ← PCB layout (KiCad 10)
+│       ├── Schematic.pdf            ← Printable schematic
+│       ├── BOM.md                   ← Bill of materials with part numbers and sources
+│       ├── JLCPCB_INSTRUCTIONS.md   ← PCB ordering steps
+│       └── gerbers/
+│           └── 350A_governor_JLCPCB.zip  ← Ready-to-upload Gerber package
+└── hardware_archive/                ← Superseded revisions (rev1, rev3, rev3_1, april2026)
 ```
 
 ---
 
 ## Quick Start
 
-1. **Order the PCB** — Upload `hardware/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
-2. **Order components** — See [hardware/BOM.md](hardware/BOM.md). Total ~$55–95 for a complete build.
+1. **Order the PCB** — Upload `hardware_rev3_2/hardware/gerbers/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
+2. **Order components** — See [hardware_rev3_2/hardware/BOM.md](hardware_rev3_2/hardware/BOM.md). Total ~$55–95 for a complete build.
 3. **Assemble** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md). All through-hole components; no SMD soldering.
 4. **Flash firmware** — See [firmware/governor_350A/README.md](firmware/governor_350A/README.md) for full instructions (Arduino IDE, PlatformIO, and CLI). Set `PULSES_PER_REV` for your engine before flashing.
 5. **Bench test** — Build the test harness described in [docs/BENCH_TEST.md](docs/BENCH_TEST.md) and verify operation before touching the aircraft.
