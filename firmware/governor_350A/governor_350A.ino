@@ -2,13 +2,25 @@
  * Beechcraft Bonanza Electric Prop — Digital Governor Controller
  * Replacement firmware for Airborne Electronics 350A (STC SA2700WE)
  *
- * Platform:  Arduino Nano (ATmega328P, 5V, 16MHz)
- * Libraries: Adafruit SSD1306, Adafruit GFX
+ * Firmware v3.0 — for hardware Rev 3.3 and later
  *
- * Panel interface: 5-position rotary switch (one position per RPM preset)
+ * Platform:  Arduino Nano (ATmega328P, 5V, 16MHz)
+ * Libraries: Adafruit SSD1306, Adafruit GFX (the display itself is optional)
+ *
+ * Panel interface: the ORIGINAL 350A panel control and nothing else — a 10k
+ * linear potentiometer wired as a two-terminal rheostat across connector
+ * pins E and F. Full clockwise (near 0 ohm) = take-off RPM, full
+ * counter-clockwise (10k) = lowest RPM. No switch, no presets, no panel unit.
+ *
+ * Behaviour, deliberately matching the original box:
+ *   - The aircraft prop switch powers the governor only in AUTO, so the
+ *     firmware starts governing by itself after power-up.
+ *   - Without a magneto RPM signal it takes no action (relays off) and
+ *     resumes on its own when the signal returns.
  *
  * ── CONFIGURATION ───────────────────────────────────────────────────────────
- * Set PULSES_PER_REV before flashing. All other parameters have safe defaults.
+ * Set PULSES_PER_REV, POT_RPM_MAX and POT_RPM_MIN before flashing.
+ * All other parameters have safe defaults.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * MIT License — see repository LICENSE file
@@ -18,19 +30,18 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <EEPROM.h>
 #include <avr/wdt.h>
 
 // ── CRITICAL: SET BEFORE FLASHING ────────────────────────────────────────────
 #define PULSES_PER_REV      3       // 6-cyl Continental (IO-470, IO-520, E-185/E-225)
                                     // Use 2 for 4-cylinder engines
 
-// ── RPM PRESETS ───────────────────────────────────────────────────────────────
-#define PRESET_MAX          2650    // Position 1 — takeoff / full fine pitch
-#define PRESET_CRUISE_CLIMB 2450    // Position 2 — best-power climb
-#define PRESET_CRUISE       2300    // Position 3 — normal cruise
-#define PRESET_ECONOMY      2200    // Position 4 — long-range economy
-// Position 5 = EMERGENCY/LOW — drives to full coarse, no RPM target
+// ── RPM RANGE OF THE PANEL KNOB ───────────────────────────────────────────────
+// SET PER AIRCRAFT / ENGINE. These defaults are PLACEHOLDERS pending Bill's
+// decision — do not fly them without confirming against the engine's limits.
+// The knob is linear between the two ends.
+#define POT_RPM_MAX         2650    // Knob full clockwise (pot ~0 ohm): take-off RPM
+#define POT_RPM_MIN         1800    // Knob full counter-clockwise (pot 10k): lowest RPM
 
 // ── CONTROL TUNING ────────────────────────────────────────────────────────────
 #define DEADBAND_RPM        25      // No correction within +/-25 RPM of setpoint
@@ -39,87 +50,95 @@
 #define CONTROL_INTERVAL_MS 100     // Control loop runs every 100ms
 
 // ── SETPOINT RAMPING ──────────────────────────────────────────────────────────
-// When switching presets, the setpoint walks toward the new target at this
-// rate rather than jumping instantly. This prevents a sudden large RPM error
-// from commanding full-duty relay drive the moment you turn the knob.
+// The knob sets a TARGET. The setpoint the control loop actually tracks walks
+// toward that target at this rate rather than jumping. This prevents a sudden
+// large RPM error from commanding full-duty relay drive the moment the knob
+// is turned (or the moment the governor is switched on).
 //
-// 100 RPM/sec: ECO->MAX (450 RPM step) takes ~4.5 seconds
+// 100 RPM/sec: a full-range knob sweep (850 RPM) takes ~8.5 seconds
 // Increase for snappier transitions; decrease for more gradual.
 #define RAMP_RATE_RPM_PER_SEC  100
 
 // ── SAFETY LIMITS ─────────────────────────────────────────────────────────────
-#define MAG_TIMEOUT_MS      2000    // Alarm if no magneto pulse for 2 seconds
+#define MAG_TIMEOUT_MS      2000    // Relays off if no valid magneto pulse for 2 seconds
 #define MAX_RELAY_MS        8000    // Safety: max relay on-time without RPM movement
 #define RPM_AVG_SAMPLES     8       // Rolling average depth for noise rejection
 
-// ── SWITCH DEBOUNCE ───────────────────────────────────────────────────────────
-// Rotary switches are "break before make" — briefly no pin is grounded as
-// the wiper moves between positions. We ignore transitions shorter than this.
-#define SWITCH_SETTLE_MS    80
+// ── MAGNETO PULSE QUALIFICATION ───────────────────────────────────────────────
+// A magneto primary rings when the points open, so one firing can produce
+// several edges. Edges closer than MIN_PULSE_US to the last accepted pulse are
+// ignored. Must stay well below the shortest real period:
+//   3500 RPM x 3 pulses/rev = 175 Hz = 5714 us.   (2 pulses/rev: 8571 us)
+#define MIN_PULSE_US        2000UL
+// A gap longer than this is not an RPM measurement (signal dropout, engine
+// start). The pulse after such a gap only restarts timing; it produces no
+// interval. 200 ms = 100 RPM at 3 pulses/rev — far below the 400 RPM floor.
+#define MAX_PULSE_US        200000UL
+
+// ── PANEL POTENTIOMETER ───────────────────────────────────────────────────────
+// Rev 3.3 hardware: J1-F is ground. J1-E has a 10k 1% pull-up to +5V and feeds
+// A7 through 10k + 100nF. The ADC reference is the same +5V, so the reading is
+// ratiometric (independent of the exact supply voltage):
+//     adc = 1023 x Rpot / (Rpot + 10k)        Rpot = 10k x adc / (1023 - adc)
+//     Rpot 0..10k  ->  adc 0..~512.   Open wire -> ~1023.
+// A shorted pot or shorted wire reads 0, which cannot be told apart from full
+// clockwise and is treated as full clockwise — the same as the original 350A.
+#define POT_OPEN_ADC        630     // Above this the pot is open (~16k; a worn 10k pot can read ~12k)
+#define POT_OPEN_MS         300     // Open/valid must persist this long before the state changes
+#define POT_INTERVAL_MS     20      // Pot is read every 20ms
+#define POT_SAMPLES         4       // ADC readings averaged per read (~0.5ms total)
+#define POT_HYST_RPM        5       // Target only moves when the knob has moved at least this far
 
 // ── HARDWARE PINS ─────────────────────────────────────────────────────────────
 #define PIN_RPM_INPUT   2   // 6N137 output -> INT0 (hardware interrupt)
-#define PIN_SW_POS1     3   // Rotary switch position 1: MAX (2650)
-#define PIN_SW_POS2     4   // Rotary switch position 2: CRUISE CLIMB (2450)
-#define PIN_SW_POS3     5   // Rotary switch position 3: CRUISE (2300)
-#define PIN_INC_RELAY   6   // NPN base (via 1kΩ) -> PNP high-side switch -> INC RPM relay (fine pitch)
-#define PIN_DEC_RELAY   7   // NPN base (via 1kΩ) -> PNP high-side switch -> DEC RPM relay (coarse pitch)
+#define PIN_INC_RELAY   6   // NPN base (via 1k) -> PNP high-side switch -> INC RPM relay (fine pitch)
+#define PIN_DEC_RELAY   7   // NPN base (via 1k) -> PNP high-side switch -> DEC RPM relay (coarse pitch)
 #define PIN_INC_LED     8   // Red LED — INC activity indicator
 #define PIN_DEC_LED     9   // Green LED — DEC activity indicator
-#define PIN_SW_POS4     10  // Rotary switch position 4: ECONOMY (2200)
-#define PIN_SW_POS5     11  // Rotary switch position 5: LOW/EMERGENCY COARSE
-// A4 = SDA (OLED), A5 = SCL (OLED) — claimed by Wire library
+#define PIN_POT         A7  // Panel pot sense (analog-only pin)
+// Relay output readback — HARDWARE PROVISION ONLY on Rev 3.3 (33k/10k dividers).
+// Nothing reads these yet; stuck-output monitoring is a follow-up item.
+#define PIN_INC_SENSE   A3  // INC_RELAY output / 4.3
+#define PIN_DEC_SENSE   A6  // DEC_RELAY output / 4.3 (analog-only pin)
+// A4 = SDA, A5 = SCL — optional OLED on the 4-pin service header (Wire library)
+// D3, D4, D5, D10, D11 were the rotary switch on Rev 3.2 and earlier. They are
+// unconnected on Rev 3.3 and are left as inputs with pull-ups.
 
-// Rotary switch wiring:
-//   COMMON terminal -> GND
-//   Each position terminal -> its Nano pin above
-//   Internal pull-ups keep all pins HIGH; selected position pulls its pin LOW.
-//   No external resistors needed.
-
-// ── DISPLAY ───────────────────────────────────────────────────────────────────
-#define OLED_I2C_ADDR   0x3C    // Change to 0x3D if display is blank at boot
+// ── DISPLAY (OPTIONAL) ────────────────────────────────────────────────────────
+// The governor runs identically with no display attached. The display is
+// probed once at boot; if it does not answer, no I2C traffic is generated.
+#define OLED_I2C_ADDR   0x3C    // Change to 0x3D if a fitted display is blank at boot
 #define SCREEN_WIDTH    128
 #define SCREEN_HEIGHT   64
-
-// ── EEPROM LAYOUT ─────────────────────────────────────────────────────────────
-#define EE_MAGIC        0x00    // 1 byte: 0xAE = valid data present
-#define EE_PRESET1      0x01    // 2 bytes uint16
-#define EE_PRESET2      0x03
-#define EE_PRESET3      0x05
-#define EE_PRESET4      0x07
-#define EEPROM_MAGIC    0xAE
-
-// ── PRESET TABLE ──────────────────────────────────────────────────────────────
-struct Preset {
-  const char* name;       // Short name for OLED (fits in large font)
-  const char* label;      // Descriptive label (small font, second row)
-  uint16_t    rpm;        // Target RPM (unused if fullCoarse)
-  bool        fullCoarse; // true: drive to coarse limit, no RPM target
-};
-
-Preset presets[5] = {
-  { "MAX",    "TAKEOFF",    PRESET_MAX,          false },
-  { "CLB",    "CRS CLIMB",  PRESET_CRUISE_CLIMB, false },
-  { "CRUISE", "CRUISE",     PRESET_CRUISE,       false },
-  { "ECO",    "ECONOMY",    PRESET_ECONOMY,      false },
-  { "LOW",    "EMER COARSE",0,                   true  },
-};
 
 // ── SYSTEM STATE ──────────────────────────────────────────────────────────────
 enum ControlMode { MODE_MANUAL, MODE_AUTO, MODE_ALARM };
 enum RelayState  { RELAY_OFF, RELAY_INC, RELAY_DEC };
 
-ControlMode currentMode  = MODE_MANUAL;
-RelayState  relayState   = RELAY_OFF;
-String      alarmMessage = "";
+// Why the governor is in AUTO but not driving. These are NOT alarms: the
+// relays are held off and governing resumes by itself when the cause clears.
+enum HoldReason  { HOLD_NONE, HOLD_NO_MAG, HOLD_POT_OPEN };
 
-int8_t activePreset    = 2;  // Active switch position (0-4), default CRUISE
-int8_t lastValidPreset = 2;  // Last confirmed position (held during transitions)
+ControlMode currentMode  = MODE_MANUAL;   // setup() ends in MODE_AUTO
+RelayState  relayState   = RELAY_OFF;
+HoldReason  holdReason   = HOLD_NO_MAG;   // Nothing is known about RPM at power-up
+const char* alarmMessage = "";            // Always points at a string literal
 
 // ── SETPOINT RAMP STATE ───────────────────────────────────────────────────────
-float    rampedSetpoint = (float)PRESET_CRUISE; // What the control loop tracks
-float    targetSetpoint = (float)PRESET_CRUISE; // Where the ramp is headed
+float    targetSetpoint = (float)POT_RPM_MIN; // Where the knob is pointing
+float    rampedSetpoint = (float)POT_RPM_MIN; // What the control loop tracks
 uint32_t lastRampTime   = 0;
+// True whenever the governor is not actively governing. The first control
+// pass that governs again starts the ramp from the RPM the prop is actually
+// turning, so switching on (or recovering) never produces a step.
+bool     reseedRamp     = true;
+
+// ── PANEL POT STATE ───────────────────────────────────────────────────────────
+uint16_t potFilt16   = 0;      // Filtered ADC reading x16
+bool     potSeeded   = false;  // False until the first valid reading
+bool     potOpen     = false;  // True while the pot circuit reads open
+uint32_t potEdge_ms  = 0;      // When the open/valid reading last agreed with potOpen
+uint32_t lastPotRead = 0;
 
 // ── RPM MEASUREMENT ───────────────────────────────────────────────────────────
 volatile uint32_t lastPulseTime_us = 0;
@@ -147,11 +166,31 @@ bool displayOK = false;
 // RPM MEASUREMENT
 // =============================================================================
 
-float calculateRPM() {
-  if (pulseInterval_us == 0) return 0.0;
+// Magneto pulse interrupt — falling edge on INT0 (pin 2).
+//   - An edge inside MIN_PULSE_US of the last accepted pulse is ringing: ignored
+//     completely (the timing reference does not move).
+//   - An edge after a gap longer than MAX_PULSE_US restarts timing without
+//     reporting an interval, so a dropout or an engine start can never be
+//     averaged in as a bogus low RPM.
+void magPulseISR() {
+  uint32_t now = micros();
+  if (lastPulseTime_us > 0) {
+    uint32_t dt = now - lastPulseTime_us;
+    if (dt < MIN_PULSE_US) return;
+    if (dt <= MAX_PULSE_US) {
+      pulseInterval_us = dt;
+      newPulse = true;
+    }
+  }
+  lastPulseTime_us = now;
+}
+
+// Rolling average of the last RPM_AVG_SAMPLES pulse intervals.
+float calculateRPM(uint32_t interval_us) {
+  if (interval_us == 0) return 0.0;
   if ((millis() - lastMagPulse_ms) > MAG_TIMEOUT_MS) return 0.0;
 
-  rpmBuffer[rpmBufIdx % RPM_AVG_SAMPLES] = pulseInterval_us;
+  rpmBuffer[rpmBufIdx % RPM_AVG_SAMPLES] = interval_us;
   rpmBufIdx++;
   if (rpmBufIdx >= RPM_AVG_SAMPLES) rpmBufFull = true;
 
@@ -160,99 +199,30 @@ float calculateRPM() {
   for (uint8_t i = 0; i < count; i++) total += rpmBuffer[i % RPM_AVG_SAMPLES];
   uint32_t avg = total / count;
 
-  return (avg > 0) ? (60000000.0f / ((float)avg * PULSES_PER_REV)) : 0.0;
+  return (avg > 0) ? (60000000.0f / ((float)avg * PULSES_PER_REV)) : 0.0f;
 }
 
 void updateRPM() {
   if (!newPulse) return;
+  // The interval is 4 bytes and the ISR can fire mid-read on an 8-bit MCU,
+  // so take the copy with interrupts held off.
+  noInterrupts();
+  uint32_t interval = pulseInterval_us;
   newPulse = false;
+  interrupts();
+
   lastMagPulse_ms = millis();
-  actualRPM = calculateRPM();
+  actualRPM = calculateRPM(interval);
 }
 
 bool magSignalLost() {
   return (millis() - lastMagPulse_ms) > MAG_TIMEOUT_MS;
 }
 
-
-// =============================================================================
-// ROTARY SWITCH READING
-// =============================================================================
-
-const uint8_t SWITCH_PINS[5] = {
-  PIN_SW_POS1, PIN_SW_POS2, PIN_SW_POS3, PIN_SW_POS4, PIN_SW_POS5
-};
-
-// Returns 0-4 if a position pin is grounded, -1 if between positions.
-int8_t readSwitchRaw() {
-  for (uint8_t i = 0; i < 5; i++) {
-    if (digitalRead(SWITCH_PINS[i]) == LOW) return (int8_t)i;
-  }
-  return -1;
-}
-
-// Debounced switch read. Handles break-before-make transitions by requiring
-// the new position to be stable for SWITCH_SETTLE_MS before accepting it.
-// Returns a confirmed position (0-4), never -1.
-static uint32_t switchChangeTime = 0;
-static int8_t   pendingPosition  = -1;
-
-int8_t readSwitch() {
-  int8_t raw = readSwitchRaw();
-
-  if (raw == -1) {
-    // Between positions: hold current, reset any pending candidate
-    pendingPosition = -1;
-    return lastValidPreset;
-  }
-
-  if (raw == lastValidPreset) {
-    // No change — already at a stable position
-    pendingPosition = -1;
-    return lastValidPreset;
-  }
-
-  // Position appears to have changed
-  if (raw != pendingPosition) {
-    // New candidate — start settle timer
-    pendingPosition  = raw;
-    switchChangeTime = millis();
-  } else if ((millis() - switchChangeTime) >= SWITCH_SETTLE_MS) {
-    // Stable for required time — accept the change
-    lastValidPreset = raw;
-    pendingPosition = -1;
-  }
-
-  return lastValidPreset; // Return last confirmed position while settling
-}
-
-
-// =============================================================================
-// SETPOINT RAMPING
-// =============================================================================
-
-// Called every loop iteration. Walks rampedSetpoint toward targetSetpoint
-// at RAMP_RATE_RPM_PER_SEC. The control loop always tracks rampedSetpoint,
-// so preset transitions feel smooth rather than lurching to full motor duty.
-//
-// Exception: EMERGENCY/LOW (full coarse) bypasses ramping and engages
-// immediately — that's exactly the case where you want instant response.
-
-void updateRamp() {
-  if (presets[activePreset].fullCoarse) return;
-
-  uint32_t now     = millis();
-  float    elapsed = (now - lastRampTime) / 1000.0f; // seconds
-  lastRampTime = now;
-
-  float maxStep = RAMP_RATE_RPM_PER_SEC * elapsed;
-  float diff    = targetSetpoint - rampedSetpoint;
-
-  if (fabs(diff) <= maxStep) {
-    rampedSetpoint = targetSetpoint; // Close enough — snap to target
-  } else {
-    rampedSetpoint += (diff > 0) ? maxStep : -maxStep;
-  }
+// RPM is only trusted once the averaging buffer has been refilled with fresh
+// intervals since the signal was last lost (or since power-up).
+bool rpmValid() {
+  return rpmBufFull && !magSignalLost();
 }
 
 
@@ -268,6 +238,31 @@ void relayOff() {
   relayState    = RELAY_OFF;
   relayOnTime_ms = 0;
 }
+
+
+// =============================================================================
+// ALARM HANDLING (latched — cleared by serial 'c' or by cycling power)
+// =============================================================================
+
+void setAlarm(const char* msg) {
+  relayOff();
+  currentMode  = MODE_ALARM;
+  alarmMessage = msg;
+  reseedRamp   = true;
+  Serial.print(F("ALARM: ")); Serial.println(msg);
+}
+
+// The box has no MANUAL of its own in the aircraft (the prop switch removes
+// power instead), so a cleared alarm returns to AUTO. Governing restarts
+// through the normal resume path: valid RPM first, ramp seeded at actual RPM.
+void clearAlarm() {
+  if (currentMode == MODE_ALARM) {
+    currentMode  = MODE_AUTO;
+    alarmMessage = "";
+    reseedRamp   = true;
+  }
+}
+
 
 // Time-proportioned relay drive within each 100ms control window.
 // duty = 0.0 (off) to 1.0 (fully on throughout window).
@@ -307,20 +302,103 @@ void setRelay(RelayState direction, float duty) {
 
 
 // =============================================================================
-// ALARM HANDLING
+// MAGNETO SIGNAL SUPERVISION
 // =============================================================================
 
-void setAlarm(const char* msg) {
+// Called every loop iteration. Like the original 350A, the governor takes no
+// action without an RPM signal: both relays are de-energized within
+// MAG_TIMEOUT_MS of the last valid pulse, in every mode. This is a standby,
+// not an alarm — when pulses return the averaging buffer refills and
+// governing resumes on its own.
+void checkMagSignal() {
+  if (!magSignalLost()) return;
   relayOff();
-  currentMode  = MODE_ALARM;
-  alarmMessage = String(msg);
-  Serial.print("ALARM: "); Serial.println(msg);
+  rpmBufIdx  = 0;       // Old intervals must not be averaged with new ones
+  rpmBufFull = false;
+  actualRPM  = 0.0;
+  reseedRamp = true;
+  if (currentMode == MODE_AUTO) holdReason = HOLD_NO_MAG;
 }
 
-void clearAlarm() {
-  if (currentMode == MODE_ALARM) {
-    currentMode  = MODE_MANUAL;
-    alarmMessage = "";
+
+// =============================================================================
+// PANEL POTENTIOMETER
+// =============================================================================
+
+// Convert an ADC reading of the pot divider into the commanded RPM.
+// Linear in pot RESISTANCE (so linear in knob rotation for a linear-taper
+// pot), not linear in ADC counts. Clamped at both ends.
+float potAdcToRPM(float adc) {
+  if (adc < 0.0f) adc = 0.0f;
+  float frac = (adc >= 1023.0f) ? 1.0f : (adc / (1023.0f - adc));   // = Rpot / 10k
+  if (frac > 1.0f) frac = 1.0f;
+  return (float)POT_RPM_MAX - (float)(POT_RPM_MAX - POT_RPM_MIN) * frac;
+}
+
+// Average a few ADC conversions (about 0.1ms each).
+uint16_t readPotAdc() {
+  uint16_t sum = 0;
+  for (uint8_t i = 0; i < POT_SAMPLES; i++) sum += analogRead(PIN_POT);
+  return sum / POT_SAMPLES;
+}
+
+// Process one averaged pot reading. Called every POT_INTERVAL_MS.
+void updatePot(uint16_t adc) {
+  uint32_t now     = millis();
+  bool     nowOpen = (adc >= POT_OPEN_ADC);
+
+  // Open-circuit detection, debounced both ways. A wiper that lifts for a
+  // moment on a worn track neither trips the fault nor moves the target.
+  if (nowOpen == potOpen) {
+    potEdge_ms = now;
+  } else if ((now - potEdge_ms) >= POT_OPEN_MS) {
+    potOpen    = nowOpen;
+    potEdge_ms = now;
+  }
+  if (nowOpen) return;      // Never let an open reading move the target
+
+  // Low-pass filter (time constant ~80ms), kept x16 for resolution
+  int16_t in = (int16_t)(adc << 4);
+  if (!potSeeded) {
+    potFilt16 = (uint16_t)in;
+  } else {
+    int16_t diff = in - (int16_t)potFilt16;
+    int16_t step = diff / 4;
+    if (step == 0 && diff != 0) step = (diff > 0) ? 1 : -1;   // always converge fully
+    potFilt16 = (uint16_t)((int16_t)potFilt16 + step);
+  }
+
+  float rpm = potAdcToRPM(potFilt16 / 16.0f);
+
+  // Hysteresis: a stationary knob must not make the target wander. The two
+  // ends are always reachable exactly.
+  if (!potSeeded || fabs(rpm - targetSetpoint) >= POT_HYST_RPM ||
+      rpm >= (float)POT_RPM_MAX || rpm <= (float)POT_RPM_MIN) {
+    targetSetpoint = rpm;
+  }
+  potSeeded = true;
+}
+
+
+// =============================================================================
+// SETPOINT RAMPING
+// =============================================================================
+
+// Called every loop iteration. Walks rampedSetpoint toward targetSetpoint
+// at RAMP_RATE_RPM_PER_SEC. The control loop always tracks rampedSetpoint,
+// so knob movements feel smooth rather than lurching to full motor duty.
+void updateRamp() {
+  uint32_t now     = millis();
+  float    elapsed = (now - lastRampTime) / 1000.0f; // seconds
+  lastRampTime = now;
+
+  float maxStep = RAMP_RATE_RPM_PER_SEC * elapsed;
+  float diff    = targetSetpoint - rampedSetpoint;
+
+  if (fabs(diff) <= maxStep) {
+    rampedSetpoint = targetSetpoint; // Close enough — snap to target
+  } else {
+    rampedSetpoint += (diff > 0) ? maxStep : -maxStep;
   }
 }
 
@@ -329,22 +407,34 @@ void clearAlarm() {
 // CONTROL ALGORITHM
 // =============================================================================
 
-// Runs every 100ms. Tracks rampedSetpoint so preset transitions are smooth.
+// Runs every 100ms. Tracks rampedSetpoint so knob movements are smooth.
 void runControlLoop() {
-  if (currentMode != MODE_AUTO) { relayOff(); return; }
+  if (currentMode != MODE_AUTO) { relayOff(); reseedRamp = true; return; }
 
-  // Safety checks first
-  if (magSignalLost()) {
-    relayOff(); setAlarm("NO MAG SIGNAL"); return;
-  }
-  if (actualRPM > 0 && (actualRPM < 400 || actualRPM > 3500)) {
-    relayOff(); setAlarm("RPM OUT OF RANGE"); return;
-  }
-
-  // Full coarse — immediate, no ramping
-  if (presets[activePreset].fullCoarse) {
-    setRelay(RELAY_DEC, 1.0);
+  // Standby conditions (not latched): take no action, resume when they clear.
+  HoldReason why = HOLD_NONE;
+  if (!rpmValid())  why = HOLD_NO_MAG;
+  else if (potOpen) why = HOLD_POT_OPEN;
+  if (why != HOLD_NONE) {
+    relayOff();
+    holdReason = why;
+    reseedRamp = true;
     return;
+  }
+  holdReason = HOLD_NONE;
+
+  // RPM sanity band (latched alarm)
+  if (actualRPM > 0 && (actualRPM < 400 || actualRPM > 3500)) {
+    setAlarm("RPM OUT OF RANGE"); return;
+  }
+
+  // First governing pass after power-up, standby, MANUAL or an alarm: start
+  // the ramp from the RPM the prop is turning right now. The setpoint then
+  // walks to the knob position at RAMP_RATE_RPM_PER_SEC.
+  if (reseedRamp) {
+    reseedRamp     = false;
+    rampedSetpoint = actualRPM;
+    lastRampTime   = millis();
   }
 
   // Proportional control against the ramped (smooth) setpoint
@@ -368,8 +458,12 @@ void runControlLoop() {
 
 
 // =============================================================================
-// DISPLAY
+// DISPLAY (optional service display)
 // =============================================================================
+
+const char* modeName() {
+  return currentMode == MODE_AUTO ? "AUTO" : currentMode == MODE_ALARM ? "ALARM" : "MAN";
+}
 
 void updateDisplay() {
   if (!displayOK) return;
@@ -379,71 +473,67 @@ void updateDisplay() {
   if (currentMode == MODE_ALARM) {
     display.setTextSize(2);
     display.setCursor(0, 0);
-    display.println("!! ALARM !!");
+    display.println(F("!! ALARM !!"));
     display.setTextSize(1);
     display.setCursor(0, 22); display.println(alarmMessage);
-    display.setCursor(0, 36); display.println("CYCLE AUTO SWITCH");
-    display.setCursor(0, 46); display.println("TO CLEAR");
+    display.setCursor(0, 36); display.println(F("CYCLE AUTO SWITCH"));
+    display.setCursor(0, 46); display.println(F("TO CLEAR"));
     if ((millis() / 500) % 2 == 0)
       display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SSD1306_WHITE);
 
   } else {
-    // Row 1 (large): preset name + mode indicator
+    char buf[14];
+
+    // Row 1 (large): the setpoint being tracked + mode indicator
     display.setTextSize(2);
     display.setCursor(0, 0);
-    display.print(presets[activePreset].name);
+    snprintf(buf, sizeof(buf), "%4d", (int)rampedSetpoint);
+    display.print(buf);
     display.setTextSize(1);
-    String mStr = (currentMode == MODE_AUTO) ? "AUTO" : "MAN";
-    display.setCursor(SCREEN_WIDTH - (mStr.length() * 6), 4);
-    display.print(mStr);
+    display.setCursor(52, 7);
+    display.print(F("RPM"));
+    display.setCursor(SCREEN_WIDTH - 24, 4);
+    display.print(modeName());
 
-    // Row 2 (small): preset label
-    display.setTextSize(1);
+    // Row 2 (small): where the knob is pointing, with ramp direction
     display.setCursor(0, 18);
-    display.print(presets[activePreset].label);
-
-    display.drawLine(0, 28, SCREEN_WIDTH, 28, SSD1306_WHITE);
-
-    // Row 3: SET RPM
-    display.setCursor(0, 32);
-    display.print("SET:");
-    if (presets[activePreset].fullCoarse) {
-      display.print(" FULL COARSE");
+    display.print(F("KNOB:"));
+    if (potOpen) {
+      display.print(F(" OPEN"));
     } else {
-      char buf[14];
-      snprintf(buf, sizeof(buf), "%5d RPM", (int)rampedSetpoint);
+      snprintf(buf, sizeof(buf), "%5d RPM", (int)targetSetpoint);
       display.print(buf);
-      // Ramp-in-progress indicator
       float diff = targetSetpoint - rampedSetpoint;
       if (fabs(diff) > 5.0) {
-        display.print(diff > 0 ? " >" : " <");
+        display.print(diff > 0 ? F(" >") : F(" <"));
       }
     }
 
-    // Row 4: ACT RPM
-    display.setCursor(0, 44);
-    display.print("ACT:");
+    display.drawLine(0, 28, SCREEN_WIDTH, 28, SSD1306_WHITE);
+
+    // Row 3: ACT RPM
+    display.setCursor(0, 36);
+    display.print(F("ACT:"));
     if (actualRPM < 10 || magSignalLost()) {
-      display.print("  ---- RPM");
+      display.print(F("  ---- RPM"));
     } else {
-      char buf[14];
       snprintf(buf, sizeof(buf), "%5d RPM", (int)actualRPM);
       display.print(buf);
     }
 
-    // Row 5: status bar
+    // Row 4: status bar
     display.setCursor(0, 56);
     if (currentMode != MODE_AUTO) {
-      display.print("MANUAL");
-    } else if (magSignalLost()) {
-      display.print("NO MAG SIGNAL");
-    } else if (presets[activePreset].fullCoarse) {
-      display.print("COARSE >>>>");
+      display.print(F("MANUAL"));
+    } else if (holdReason == HOLD_NO_MAG) {
+      display.print(F("NO MAG SIGNAL"));
+    } else if (holdReason == HOLD_POT_OPEN) {
+      display.print(F("POT OPEN"));
     } else {
       float error = rampedSetpoint - actualRPM;
       if (fabs(error) < DEADBAND_RPM) {
         // HOLD: show a stability bar
-        display.print("HOLD");
+        display.print(F("HOLD"));
         display.drawLine(28, 60, SCREEN_WIDTH - 2, 60, SSD1306_WHITE);
       } else {
         // Activity bar: width proportional to duty
@@ -453,37 +543,22 @@ void updateDisplay() {
         // Label inverts over the filled bar
         display.setTextColor(SSD1306_BLACK);
         display.setCursor(2, 56);
-        display.print(error > 0 ? "INC" : "DEC");
+        display.print(error > 0 ? F("INC") : F("DEC"));
         display.setTextColor(SSD1306_WHITE);
       }
     }
   }
 
   display.display();
-}
 
-
-// =============================================================================
-// EEPROM
-// =============================================================================
-
-void loadSettings() {
-  if (EEPROM.read(EE_MAGIC) != EEPROM_MAGIC) {
-    // First boot — write defaults
-    EEPROM.write(EE_MAGIC, EEPROM_MAGIC);
-    EEPROM.put(EE_PRESET1, (uint16_t)PRESET_MAX);
-    EEPROM.put(EE_PRESET2, (uint16_t)PRESET_CRUISE_CLIMB);
-    EEPROM.put(EE_PRESET3, (uint16_t)PRESET_CRUISE);
-    EEPROM.put(EE_PRESET4, (uint16_t)PRESET_ECONOMY);
-    Serial.println("EEPROM: defaults written");
-  } else {
-    uint16_t p1, p2, p3, p4;
-    EEPROM.get(EE_PRESET1, p1); presets[0].rpm = p1;
-    EEPROM.get(EE_PRESET2, p2); presets[1].rpm = p2;
-    EEPROM.get(EE_PRESET3, p3); presets[2].rpm = p3;
-    EEPROM.get(EE_PRESET4, p4); presets[3].rpm = p4;
-    Serial.println("EEPROM: settings loaded");
+#ifdef WIRE_HAS_TIMEOUT
+  // A display that stops answering mid-flight must not keep stalling the loop.
+  if (Wire.getWireTimeoutFlag()) {
+    Wire.clearWireTimeoutFlag();
+    displayOK = false;
+    Serial.println(F("OLED timeout - display disabled"));
   }
+#endif
 }
 
 
@@ -492,31 +567,29 @@ void loadSettings() {
 // =============================================================================
 
 void printStatus() {
-  Serial.print("Mode=");    Serial.print(currentMode == MODE_AUTO ? "AUTO" : currentMode == MODE_ALARM ? "ALARM" : "MAN");
-  Serial.print(" SW=");     Serial.print(presets[activePreset].name);
-  Serial.print(" Target="); Serial.print((int)targetSetpoint);
-  Serial.print(" Ramped="); Serial.print((int)rampedSetpoint);
-  Serial.print(" ACT=");    Serial.print((int)actualRPM);
-  Serial.print(" Err=");    Serial.print((int)(rampedSetpoint - actualRPM));
-  Serial.print(" Relay=");
-  Serial.println(relayState == RELAY_INC ? "INC" : relayState == RELAY_DEC ? "DEC" : "OFF");
+  Serial.print(F("Mode="));    Serial.print(modeName());
+  Serial.print(F(" Hold="));
+  Serial.print(holdReason == HOLD_NO_MAG ? F("NO_MAG") : holdReason == HOLD_POT_OPEN ? F("POT_OPEN") : F("-"));
+  Serial.print(F(" PotADC=")); Serial.print(potFilt16 >> 4);
+  Serial.print(F(" Target=")); Serial.print((int)targetSetpoint);
+  Serial.print(F(" Ramped=")); Serial.print((int)rampedSetpoint);
+  Serial.print(F(" ACT="));    Serial.print((int)actualRPM);
+  Serial.print(F(" Err="));    Serial.print((int)(rampedSetpoint - actualRPM));
+  Serial.print(F(" Relay="));
+  Serial.println(relayState == RELAY_INC ? F("INC") : relayState == RELAY_DEC ? F("DEC") : F("OFF"));
 }
 
+// Bench/service console. Nothing here is needed in the aircraft.
 void handleSerial() {
   if (!Serial.available()) return;
   char c = Serial.read();
   switch (c) {
     case 's': printStatus(); break;
-    case 'a': currentMode = MODE_AUTO;   Serial.println("-> AUTO"); break;
-    case 'm': currentMode = MODE_MANUAL; relayOff(); Serial.println("-> MANUAL"); break;
-    case 'c': clearAlarm(); Serial.println("Alarm cleared"); break;
-    case '1': activePreset=0; targetSetpoint=presets[0].rpm; Serial.println("Sim SW->1 MAX"); break;
-    case '2': activePreset=1; targetSetpoint=presets[1].rpm; Serial.println("Sim SW->2 CLB"); break;
-    case '3': activePreset=2; targetSetpoint=presets[2].rpm; Serial.println("Sim SW->3 CRS"); break;
-    case '4': activePreset=3; targetSetpoint=presets[3].rpm; Serial.println("Sim SW->4 ECO"); break;
-    case '5': activePreset=4; Serial.println("Sim SW->5 LOW"); break;
+    case 'a': currentMode = MODE_AUTO; reseedRamp = true; Serial.println(F("-> AUTO")); break;
+    case 'm': currentMode = MODE_MANUAL; relayOff(); Serial.println(F("-> MANUAL")); break;
+    case 'c': clearAlarm(); Serial.println(F("Alarm cleared")); break;
     case '?':
-      Serial.println("Commands: s=status a=auto m=manual c=clear 1-5=sim_switch ?=help");
+      Serial.println(F("Commands: s=status a=auto m=manual(relays off) c=clear_alarm ?=help"));
       break;
   }
 }
@@ -529,9 +602,11 @@ void handleSerial() {
 void setup() {
   Serial.begin(9600);
   Serial.println();
-  Serial.println("350A Digital Governor v2.0");
-  Serial.print("PULSES_PER_REV="); Serial.println(PULSES_PER_REV);
-  Serial.print("RAMP_RATE="); Serial.print(RAMP_RATE_RPM_PER_SEC); Serial.println(" RPM/sec");
+  Serial.println(F("350A Digital Governor v3.0"));
+  Serial.print(F("PULSES_PER_REV=")); Serial.println(PULSES_PER_REV);
+  Serial.print(F("Knob range=")); Serial.print(POT_RPM_MIN);
+  Serial.print(F("-")); Serial.print(POT_RPM_MAX); Serial.println(F(" RPM"));
+  Serial.print(F("RAMP_RATE=")); Serial.print(RAMP_RATE_RPM_PER_SEC); Serial.println(F(" RPM/sec"));
 
   // Output pins — relay channels drive NPN+PNP high-side switches; HIGH = relay on
   pinMode(PIN_INC_RELAY, OUTPUT); digitalWrite(PIN_INC_RELAY, LOW);
@@ -539,66 +614,74 @@ void setup() {
   pinMode(PIN_INC_LED,   OUTPUT); digitalWrite(PIN_INC_LED,   LOW);
   pinMode(PIN_DEC_LED,   OUTPUT); digitalWrite(PIN_DEC_LED,   LOW);
 
-  // RPM input and all 5 switch pins with internal pull-ups
+  // RPM input with internal pull-up (board also has a 4.7k pull-up)
   pinMode(PIN_RPM_INPUT, INPUT_PULLUP);
-  for (uint8_t i = 0; i < 5; i++) pinMode(SWITCH_PINS[i], INPUT_PULLUP);
+
+  // Former rotary-switch pins: unconnected on Rev 3.3 — don't leave them floating
+  pinMode(3, INPUT_PULLUP);  pinMode(4, INPUT_PULLUP);  pinMode(5, INPUT_PULLUP);
+  pinMode(10, INPUT_PULLUP); pinMode(11, INPUT_PULLUP);
 
   // Magneto pulse interrupt — falling edge on INT0 (pin 2)
   EIFR = (1 << INTF0);
-  attachInterrupt(digitalPinToInterrupt(PIN_RPM_INPUT), []() {
-    uint32_t now = micros();
-    if (lastPulseTime_us > 0) pulseInterval_us = now - lastPulseTime_us;
-    lastPulseTime_us = now;
-    newPulse = true;
-  }, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_RPM_INPUT), magPulseISR, FALLING);
 
   for (uint8_t i = 0; i < RPM_AVG_SAMPLES; i++) rpmBuffer[i] = 0;
-  lastMagPulse_ms = millis(); // Prevent immediate MAG alarm at boot
+  rpmBufIdx  = 0;
+  rpmBufFull = false;
+  lastMagPulse_ms = millis();
 
-  // OLED
-  displayOK = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
+  // Optional OLED. Probe the address first: with nothing on the service
+  // header the display code is never called and the I2C bus stays silent.
+  Wire.begin();
+#ifdef WIRE_HAS_TIMEOUT
+  Wire.setWireTimeout(5000, true);   // a stuck bus can never hang the governor
+#endif
+  Wire.beginTransmission(OLED_I2C_ADDR);
+  displayOK = (Wire.endTransmission() == 0) &&
+              display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
   if (!displayOK) {
-    Serial.println("OLED not found (try OLED_I2C_ADDR 0x3D)");
+    Serial.println(F("No OLED (optional) - running without display"));
   } else {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);  display.println("350A Governor v2.0");
-    display.setCursor(0, 12); display.println("Rotary Switch Panel");
-    display.setCursor(0, 30); display.println("Initializing...");
+    display.setCursor(0, 0);  display.println(F("350A Governor v3.0"));
+    display.setCursor(0, 12); display.println(F("Panel pot control"));
+    display.setCursor(0, 30); display.println(F("Initializing..."));
     display.display();
-    delay(1200);
+    delay(600);
   }
 
-  loadSettings();
-
-  // Read initial switch position at boot (allow 200ms for contacts to settle)
-  uint32_t t0 = millis();
-  while ((millis() - t0) < 200) {
-    int8_t pos = readSwitchRaw();
-    if (pos >= 0) { activePreset = pos; lastValidPreset = pos; break; }
-  }
-  if (readSwitchRaw() < 0) { activePreset = 2; lastValidPreset = 2; } // Default CRUISE
-
-  // Seed the ramp at the current preset — no movement at boot
-  if (!presets[activePreset].fullCoarse) {
-    rampedSetpoint = (float)presets[activePreset].rpm;
-    targetSetpoint = rampedSetpoint;
-  }
+  // Read the knob once so the target is right from the first control pass.
+  // If the pot circuit is already open, start in the POT OPEN standby.
+  uint16_t adc = readPotAdc();
+  potSeeded  = false;
+  potOpen    = (adc >= POT_OPEN_ADC);
+  potEdge_ms = millis();
+  updatePot(adc);
+  rampedSetpoint = targetSetpoint;
 
   lastRampTime   = millis();
   lastControlRun = millis();
-  currentMode    = MODE_MANUAL;
+  lastPotRead    = millis();
   relayOff();
+
+  // The aircraft prop switch only powers this box in AUTO, so power-up means
+  // "govern". Nothing is driven until a valid magneto signal is present, and
+  // the ramp then starts from the actual RPM.
+  currentMode = MODE_AUTO;
+  holdReason  = HOLD_NO_MAG;
+  reseedRamp  = true;
 
   // Hardware watchdog — 250ms timeout
   // wdt_reset() must be called at least every 250ms or MCU resets and
   // relays de-energize. This is the last-resort firmware hang protection.
   wdt_enable(WDTO_250MS);
 
-  Serial.print("Boot: SW position "); Serial.print(activePreset + 1);
-  Serial.print(" ("); Serial.print(presets[activePreset].name); Serial.println(")");
-  Serial.println("Ready. Type ? for commands.");
+  Serial.print(F("Boot: knob -> "));
+  if (potOpen) Serial.println(F("POT OPEN"));
+  else { Serial.print((int)targetSetpoint); Serial.println(F(" RPM")); }
+  Serial.println(F("AUTO. Type ? for commands."));
 }
 
 
@@ -614,17 +697,13 @@ void loop() {
   // Update RPM from ISR data
   if (newPulse) updateRPM();
 
-  // Read rotary switch with debounce
-  int8_t sw = readSwitch();
-  if (sw != activePreset) {
-    activePreset = sw;
-    if (presets[activePreset].fullCoarse) {
-      rampedSetpoint = 0; // Emergency — no ramp, engage immediately
-    } else {
-      targetSetpoint = (float)presets[activePreset].rpm;
-      // rampedSetpoint continues from wherever it is now — ramp handles the rest
-    }
-    Serial.print("Switch -> "); Serial.println(presets[activePreset].name);
+  // No magneto signal -> relays off within MAG_TIMEOUT_MS, every pass
+  checkMagSignal();
+
+  // Read the panel knob at 50Hz
+  if ((now - lastPotRead) >= POT_INTERVAL_MS) {
+    lastPotRead = now;
+    updatePot(readPotAdc());
   }
 
   // Update setpoint ramp (runs every loop, very lightweight)
@@ -643,11 +722,6 @@ void loop() {
   if ((now - lastDisplayUpdate) >= 200) {
     lastDisplayUpdate = now;
     updateDisplay();
-  }
-
-  // Mag signal loss — alarm in AUTO only
-  if (currentMode == MODE_AUTO && magSignalLost()) {
-    setAlarm("NO MAG SIGNAL");
   }
 
   // Serial status in AUTO

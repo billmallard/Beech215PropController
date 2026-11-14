@@ -2,19 +2,35 @@
 
 Arduino sketch for the Beechcraft Bonanza digital prop governor. Targets the **Arduino Nano (ATmega328P, 5V, 16MHz)**.
 
+**Firmware v3.0 requires hardware Rev 3.3.** The RPM setpoint comes from the original-style panel potentiometer (10k linear, two wires on connector pins E and F, read on Nano pin A7). The rotary switch, presets and EEPROM settings of v2.0 are gone. For Rev 3.2 and earlier boards use the v2.0 sketch from git history.
+
+How it behaves, deliberately matching the original 350A box:
+
+- **Power-up means govern.** The aircraft prop switch only powers the governor in AUTO, so the firmware starts in AUTO with no command needed.
+- **No magneto signal: no action.** Relays are held off (within 2 seconds of the last pulse) and governing resumes by itself when the signal returns. This is a standby, not a latched alarm.
+- **Knob full clockwise = `POT_RPM_MAX`, full counter-clockwise = `POT_RPM_MIN`,** linear in between. An open pot circuit is a standby (`POT OPEN`, relays off, self-recovering). A shorted pot circuit reads as full clockwise, as on the original.
+- **Whenever governing starts or resumes, the setpoint starts at the actual RPM** and walks to the knob position at `RAMP_RATE_RPM_PER_SEC`.
+- **The OLED is optional.** It is probed once at boot; with nothing on the J2 service header there is no I2C traffic at all.
+- Still **latched** (serial `c` or power cycle to clear): `RPM OUT OF RANGE` (below 400 / above 3500) and `RELAY TIMEOUT` (8 seconds of continuous relay drive).
+
 ---
 
 ## Before You Flash
 
-**One setting must be correct for your engine before uploading:**
+**Three settings must be correct for your engine before uploading:**
 
 ```cpp
 // governor_350A.ino — top of file
 #define PULSES_PER_REV  3   // 6-cyl Continental (IO-470, IO-520, E-185/E-225)
                             // Change to 2 for 4-cylinder engines
+
+#define POT_RPM_MAX  2650   // Knob full clockwise: take-off RPM
+#define POT_RPM_MIN  1800   // Knob full counter-clockwise: lowest RPM
 ```
 
 All early Bonanzas use Continental 6-cylinder engines. `3` is correct for all of them. Getting this wrong causes the RPM reading to be off by 33% and the governor will not hold correctly.
+
+`POT_RPM_MAX` / `POT_RPM_MIN` are the two ends of the panel knob. **The shipped values are placeholders pending a decision — set them for the aircraft and engine before flight.** `POT_RPM_MAX` takes the place of the take-off RPM trim screw of the original 350A (which shipped set to 2300 unless ordered otherwise).
 
 ---
 
@@ -45,11 +61,13 @@ All early Bonanzas use Continental 6-cylinder engines. `3` is correct for all of
 
 9. **Open Serial Monitor** — *Tools → Serial Monitor*, baud rate `9600`. You should see:
    ```
-   350A Digital Governor v2.0
+   350A Digital Governor v3.0
    PULSES_PER_REV=3
+   Knob range=1800-2650 RPM
    RAMP_RATE=100 RPM/sec
-   Boot: SW position 3 (CRUISE)
-   Ready. Type ? for commands.
+   No OLED (optional) - running without display
+   Boot: knob -> 2225 RPM
+   AUTO. Type ? for commands.
    ```
 
 ---
@@ -83,14 +101,16 @@ PlatformIO integrates with VS Code and handles library management automatically.
    pio device monitor --baud 9600
    ```
 
-**Expected build output (approximate):**
+**Build output for v3.0 (PlatformIO 6.1.19, Adafruit SSD1306 2.5.17, GFX 1.13.0):**
 ```
-RAM:   [=======   ]  66.7% (used 1367 bytes from 2048 bytes)
-Flash: [========  ]  78.1% (used 23998 bytes from 30720 bytes)
+RAM:   [===       ]  33.4% (used 685 bytes from 2048 bytes)
+Flash: [=======   ]  74.2% (used 22802 bytes from 30720 bytes)
 [SUCCESS]
 ```
 
-Flash usage is high because the Adafruit SSD1306 + GFX libraries are large. There is approximately 6KB of flash headroom available. RAM has ~680 bytes free at runtime; the call stack lives here so don't add large local arrays.
+Flash usage is high because the Adafruit SSD1306 + GFX libraries are large. There is approximately 8KB of flash headroom available. The static RAM figure does not include the display's 1024-byte frame buffer, which the library takes from the heap **only when an OLED is detected at boot**. That buffer has to fit in what is left, so static RAM must stay under roughly 800 bytes or a fitted display silently fails to start. With a display running, about 340 bytes remain for the stack (estimated worst-case use is under 200) — don't add large local arrays or RAM-resident strings. All `Serial`/`display` text is wrapped in `F()` to keep it in flash for this reason; the sketch uses no `String` objects and no EEPROM. With no display fitted about 1360 bytes are free.
+
+> `platformio.ini` restricts the AVR build to the sketch (`build_src_filter`). Without that filter `pio run` also tries to compile `test/` for AVR and fails on `unity.h`.
 
 ---
 
@@ -152,17 +172,18 @@ While the Nano is connected via USB, a debug console is available at **9600 baud
 |---|---|
 | `?` | Print command help |
 | `s` | Print full status line |
-| `a` | Switch to AUTO mode |
-| `m` | Switch to MANUAL mode, disable relays |
-| `c` | Clear active alarm |
-| `1`–`5` | Simulate rotary switch position (for bench testing without hardware) |
+| `a` | Bench override: back to AUTO (the power-up state) |
+| `m` | Bench override: MANUAL — relays held off |
+| `c` | Clear a latched alarm (returns to AUTO) |
+
+None of these are needed in the aircraft. There is no command to simulate the knob — connect a 10k pot (or a fixed resistor) across J1 pins E and F.
 
 **Example status output (`s` command):**
 ```
-Mode=AUTO SW=CRUISE Target=2300 Ramped=2300 ACT=2287 Err=13 Relay=OFF
+Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF
 ```
 
-When in AUTO mode, the status line prints automatically every 2 seconds.
+`Hold` shows why AUTO is not driving (`NO_MAG`, `POT_OPEN`, or `-` when governing). `PotADC` is the filtered pot reading: 0 at full clockwise, about 512 at full counter-clockwise, about 1023 with the pot disconnected. When in AUTO mode, the status line prints automatically every 2 seconds.
 
 ---
 
@@ -172,27 +193,30 @@ The firmware includes a [Unity](https://github.com/ThrowTheSwitch/Unity)-based t
 
 ### What Is Tested
 
-Tests mock all Arduino/AVR hardware APIs (GPIO, timers, EEPROM, I2C, watchdog) and compile the `.ino` directly as a C++ translation unit. This allows the pure logic functions to be executed and verified offline.
+Tests mock all Arduino/AVR hardware APIs (GPIO, ADC, timers, I2C, watchdog) and compile the `.ino` directly as a C++ translation unit. This allows the logic — including the real `setup()` and `loop()` — to be executed and verified offline against mock time.
 
 | Module | Test cases | What is verified |
 |---|---|---|
-| `calculateRPM()` | 6 | Zero when no pulse interval; zero when mag signal timeout; correct RPM at all four preset values (2200, 2300, 2450, 2650) with 3 PPR; rolling average dampens a spike without wild RPM reading |
-| `magSignalLost()` | 3 | Returns false when signal is fresh; returns false 1 ms before the 2-second timeout; returns true 1 ms after the timeout |
-| `updateRamp()` | 5 | Ramps up toward higher target at correct rate (100 RPM/sec); ramps down toward lower target; snaps to target when remaining gap is smaller than one step; never overshoots; skips entirely when fullCoarse preset is active |
-| `runControlLoop()` | 10 | Commands INC relay when RPM is below setpoint; commands DEC relay when above; cuts off both relays inside the ±25 RPM deadband; does not act in MANUAL mode; triggers ALARM and de-energizes relays on mag signal loss; triggers ALARM on RPM below 400 or above 3500; drives DEC continuously in fullCoarse (EMERGENCY) mode; commands full relay duty when error ≥ PROP_ZONE_RPM; commands proportional duty when error is inside the proportional zone |
+| `magPulseISR()` | 5 | First pulse reports no interval; interval between pulses; ringing edges inside the 2 ms blanking window are ignored and do not move the timing reference; a pulse at the maximum legitimate rate (3500 RPM) is never rejected; a dropout longer than 200 ms restarts timing without reporting the gap as an RPM |
+| `calculateRPM()` | 6 | Zero when no pulse interval; zero when mag signal timeout; correct RPM at 1800, 2300 and 2650 with 3 PPR; rolling average dampens a spike |
+| `magSignalLost()` / `checkMagSignal()` | 5 | Timeout boundary (1 ms either side of 2 s); nothing is disturbed while the signal is fresh; on loss the relays drop in every mode, the mode is unchanged, and the RPM average is reset so it must refill |
+| `potAdcToRPM()` | 7 | Full CW = `POT_RPM_MAX`; full CCW = `POT_RPM_MIN`; mid-travel = midpoint; linear in pot resistance at quarter and three-quarter travel; clamps beyond both ends (including a worn 12k pot and an open reading); monotonic and in range for every ADC code; open threshold sits between a worn pot and an open wire |
+| `updatePot()` / `readPotAdc()` | 9 | First reading seeds the target; target follows the knob; both end stops are reached exactly; ±1 count of ADC noise for 10 s never moves the target (three knob positions); an open reading trips only after 300 ms and never moves the target; a briefly lifting wiper is ignored; recovery is debounced and self-clearing; a worn 12k pot is minimum RPM, not a fault; the pot pin is averaged |
+| `updateRamp()` | 5 | Ramps up and down at 100 RPM/sec; snaps when within one step; never overshoots; a full-range knob slam is rate-limited |
+| `runControlLoop()` | 16 | INC below setpoint, DEC above, off inside the deadband; no action in MANUAL; mag loss is a non-latching standby; no drive until the RPM average has refilled; pot open holds relays off and recovers without a step; first governing pass seeds the ramp at actual RPM; `RPM OUT OF RANGE` above 3500 and below 400, and it stays latched; `RELAY TIMEOUT` latches after 8 s of continuous drive; clearing an alarm returns to AUTO through the resume path; full duty outside the proportional zone; proportional duty inside it |
+| `setup()` / `loop()` | 8 | Boots straight into AUTO with relays off and the target read from the pot; boot with an open pot stays in `POT OPEN` and never drives; no display means exactly one I2C probe and no further traffic; a detected display is enabled; 10 s with no magneto signal never drives and never alarms; governs by itself once the signal is valid, ramp starting at actual RPM; a signal dropout drops the relays within 2 s, stays in AUTO, and resumes by itself at the new RPM without a false alarm; ringing on every pulse does not corrupt the RPM reading |
 
-**Total: 24 tests, 0 failures.**
+**Total: 61 tests, 0 failures.**
 
 ### What Is Not Testable Without Hardware
 
 | Functionality | Why it can't be unit tested |
 |---|---|
-| `readSwitch()` debounce | Requires `digitalRead()` returning a changing sequence over real time. The static state variables inside the function also can't be reset from outside. |
+| ADC accuracy of the pot input | The mock ADC returns ideal counts. Real offset, noise and the 10k/100nF input filter are checked on the bench (BENCH_TEST Test 3). |
 | Relay contact waveform (actual duty cycle) | The proportional relay drive calculates `millis() % CONTROL_INTERVAL_MS` to place the on-pulse within the 100ms window. Verifying the GPIO waveform shape requires a real-time environment with accurate timer semantics. |
 | OLED rendering | `updateDisplay()` has no observable output in a mock environment. OLED correctness is verified visually during bench test. |
 | Watchdog reset behavior | The ATmega328P watchdog timer is a hardware peripheral. `wdt_enable()` / `wdt_reset()` are no-ops in the test mock. Watchdog function is inherent to the MCU and doesn't require software verification. |
-| EEPROM persistence across power cycles | The mock EEPROM is a RAM array that resets at program start. Testing true non-volatile persistence requires either the physical chip or a more complete simulator. |
-| `loadSettings()` round-trip | Depends on EEPROM persistence. Functional correctness is verified during bench test by power-cycling and confirming settings are retained. |
+| I2C bus fault handling | The Wire timeout (`WIRE_HAS_TIMEOUT` block) that stops a stuck bus from stalling the loop only exists in the real AVR core. |
 | Optocoupler signal conditioning | Analog/electrical behavior of the 6N137 (slew rate, noise rejection). Verified with an oscilloscope at the bench test stage per [docs/BENCH_TEST.md](../../docs/BENCH_TEST.md). |
 | Full system integration | End-to-end behavior (mag signal → interrupt → RPM → relay → motor → RPM) requires the complete hardware assembly. See `docs/BENCH_TEST.md` for the full ground test procedure. |
 
@@ -242,13 +266,13 @@ Adjust the VS path for your installed version (2017/2019/2022).
 #### Expected output
 
 ```
-test\test_firmware\test_firmware.cpp:319:test_rpm_zero_when_no_pulse_interval:PASS
-test\test_firmware\test_firmware.cpp:320:test_rpm_zero_when_mag_signal_lost:PASS
+test\test_firmware\test_firmware.cpp:794:test_isr_first_pulse_reports_no_interval:PASS
+test\test_firmware\test_firmware.cpp:795:test_isr_reports_interval_between_pulses:PASS
 ...
-test\test_firmware\test_firmware.cpp:348:test_control_proportional_duty_in_prop_zone:PASS
+test\test_firmware\test_firmware.cpp:868:test_loop_ringing_on_every_pulse_does_not_corrupt_rpm:PASS
 
 -----------------------
-24 Tests 0 Failures 0 Ignored
+61 Tests 0 Failures 0 Ignored
 OK
 ```
 
@@ -260,15 +284,14 @@ firmware/governor_350A/
 ├── platformio.ini             ← Build config (AVR + native test environments)
 └── test/
     ├── mocks/                 ← Arduino/AVR API stubs for native compilation
-    │   ├── Arduino.h          ← millis(), micros(), digitalRead/Write, Serial, String
-    │   ├── Wire.h             ← TwoWire stub
-    │   ├── EEPROM.h           ← RAM-backed EEPROM stub
+    │   ├── Arduino.h          ← millis(), micros(), digitalRead/Write, analogRead, Serial
+    │   ├── Wire.h             ← TwoWire stub with a settable "display present" flag
     │   ├── Adafruit_GFX.h     ← Empty stub (not exercised by logic tests)
     │   ├── Adafruit_SSD1306.h ← No-op method stubs
     │   └── avr/
     │       └── wdt.h          ← wdt_enable/wdt_reset no-ops
     └── test_firmware/
-        └── test_firmware.cpp  ← 24 Unity test cases
+        └── test_firmware.cpp  ← 61 Unity test cases
 ```
 
 ---
@@ -282,7 +305,12 @@ All tuning constants are `#define`d at the top of the sketch. Defaults are conse
 | `DEADBAND_RPM` | 25 | No correction within ±25 RPM of setpoint. Increase if relay chatters at target; decrease for tighter hold. |
 | `PROP_ZONE_RPM` | 75 | Proportional slowdown starts this far from setpoint. Must be > `DEADBAND_RPM`. |
 | `MIN_DUTY_PCT` | 25 | Minimum relay duty in the proportional zone (prevents relay from switching too briefly to move the motor). |
-| `RAMP_RATE_RPM_PER_SEC` | 100 | How fast the setpoint walks to a new preset. At 100 RPM/sec, ECO→MAX (450 RPM) takes ~4.5 seconds. |
-| `MAG_TIMEOUT_MS` | 2000 | Alarm if no magneto pulse for this long (engine idle produces ~90 Hz; 2 seconds is 180 missed pulses). |
+| `RAMP_RATE_RPM_PER_SEC` | 100 | How fast the setpoint walks toward the knob position (and from actual RPM whenever governing starts). At 100 RPM/sec a full-range knob sweep (850 RPM) takes ~8.5 seconds. |
+| `MAG_TIMEOUT_MS` | 2000 | Relays off (standby) if no valid magneto pulse for this long. |
+| `MIN_PULSE_US` | 2000 | Edges closer than this to the last accepted magneto pulse are treated as ringing and ignored. Must stay well under the shortest real period (5714 µs at 3500 RPM, 3 pulses/rev). |
+| `MAX_PULSE_US` | 200000 | A gap longer than this restarts pulse timing instead of being read as a (very low) RPM. |
+| `POT_OPEN_ADC` | 630 | A pot reading above this (about 16kΩ) is an open circuit. A worn 10k pot reading 12kΩ is still valid. |
+| `POT_OPEN_MS` | 300 | How long an open (or recovered) reading must persist before the state changes. |
+| `POT_HYST_RPM` | 5 | The target only moves when the knob has moved at least this far, so a stationary knob never jitters. |
 | `MAX_RELAY_MS` | 8000 | Safety: cut relay if it's been continuously on for 8 seconds without the RPM moving. |
 | `CONTROL_INTERVAL_MS` | 100 | Control loop cadence. Also the PWM period for proportional duty output. |
