@@ -6,6 +6,8 @@
 
 > **A modern, proportional-control replacement for the Airborne Electronics 350A solid-state propeller governor — for Beechcraft Bonanza models with the Beech 215-210 electric prop.**
 
+> **Status, 2026-11-14:** hardware Rev 3.3 and firmware v3.0 are design-complete and unit-tested. **No Rev 3.3 board has been built, bench-tested or flown.** Earlier board revisions have known faults and must not be built. See [hardware_rev3_3/REV3_3_CHANGES.md](hardware_rev3_3/REV3_3_CHANGES.md).
+
 ---
 
 ## The Problem This Solves
@@ -14,10 +16,9 @@ The original Airborne Electronics 350A (covered under STC SA2700WE) uses a **ban
 
 - Freshly overhauled prop motors with more torque than the 50-year-old electronics expected
 - Aging capacitors and resistors in the original controller that shrink the deadband
-- The original panel rheostat giving no indication of what RPM is actually set
 - Rough magneto signal from high-time mags degrading the RPM sensing
 
-**This project replaces only the electronics inside the governor box.** The 7-pin Cannon connector, airframe wiring, prop motor, limit switches, and relays are all unchanged. From the aircraft's perspective, the interface is identical to the original.
+**This project replaces only the electronics inside the governor box.** The 7-pin Cannon connector, airframe wiring, panel RPM knob, prop motor, limit switches, and relays are all unchanged. From the aircraft's perspective, the interface is identical to the original.
 
 ## What It Does Differently
 
@@ -25,10 +26,10 @@ The original Airborne Electronics 350A (covered under STC SA2700WE) uses a **ban
 |---|---|---|
 | Control type | Bang-bang (full voltage on/off) | Proportional — slows motor near setpoint |
 | Deadband | Fixed by aging analog components | Software-configurable (default ±25 RPM) |
-| RPM display | None — knob position only | OLED shows set RPM and actual RPM |
-| Presets | None | 5 named presets (Max, Cruise Climb, Cruise, Economy, Emergency) |
-| Setpoint transition | Instant jump (causes full-duty relay surge) | Soft ramp 100 RPM/sec — smooth, no lurch |
-| Fail-safe | RPM signal loss → no action | Loss of mag signal → relays de-energize, alarm displayed |
+| Panel control | 10kΩ knob on connector pins E and F | The same knob on the same two wires. Nothing is added to the panel |
+| RPM readout | None | None in the aircraft. An optional display can be plugged into the board on the bench |
+| Setpoint transition | Follows the knob directly | Walks to the new knob setting at 100 RPM/sec — smooth, no lurch |
+| Fail-safe | RPM signal loss → no action | Same: no magneto signal for 2 seconds → both relays off; governing resumes when the signal returns |
 | Watchdog | None | Hardware watchdog resets MCU in 250ms if firmware stalls |
 | Motor runaway protection | Limit switches only | 8-second relay timeout regardless of limit switch state |
 
@@ -50,24 +51,21 @@ This project is designed for **owner-produced parts** under 14 CFR Part 21.303. 
 
 ## Hardware Overview
 
-The system consists of two units:
+The system is one unit: the governor box. The panel knob and all aircraft wiring stay as they are.
 
 **Governor Box** (replaces the 350A housing, mounts in the same location):
 - Arduino Nano (ATmega328P)
-- 6N137 optocoupler (galvanic isolation of magneto P-lead)
+- 6N137 optocoupler on the magneto P-lead input
 - 2N2222A + 2N2907A high-side relay drivers (NPN level shifter + PNP switch per channel)
 - 1N4001 flyback diodes across each relay coil circuit
+- Panel-control input for the original 10kΩ knob (connector pins E and F), with open-wire detection
+- 12V input protection: resettable fuse and transient clamp
 - LM2596S-5V DC-DC switching regulator
-- Supporting passives
+- Optional 4-pin header for an SSD1306 display, for bench work only
 
-Current hardware revision: **3.2** (2026-07-25 — flyback diode placement corrected per flight-test feedback; boards are marked "REV 3.2" on the silkscreen). If you built an earlier Rev 3/3.1 board, see [docs/REWORK_FLYBACK_DIODES.md](docs/REWORK_FLYBACK_DIODES.md).
+Current hardware revision: **3.3** (2026-11-14; boards are marked "REV 3.3" on the silkscreen). Rev 3.3 returns the panel control to the original potentiometer and fixes faults found in a design review of Rev 3.2. It needs firmware v3.0. **Rev 3, 3.1 and 3.2 boards must not be built or flown**; the reasons are in [hardware_rev3_3/REV3_3_CHANGES.md](hardware_rev3_3/REV3_3_CHANGES.md).
 
-**Panel Unit** (replaces the knob/rheostat assembly):
-- SSD1306 1.3" OLED display (128×64, I2C)
-- 5-position rotary switch (one detent per preset — Lorlin CK1024 or Grayhill 56-series)
-- Original prop control knob reuses directly on the switch shaft
-
-The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at approximately **$2 for 5 boards**. The panel cable is 10 conductors (simplified from earlier designs).
+The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at approximately **$2 for 5 boards**.
 
 ---
 
@@ -90,9 +88,10 @@ Beech215PropController/
 │       ├── governor_350A.ino        ← Arduino sketch (fully commented)
 │       ├── platformio.ini           ← PlatformIO build config (AVR + native test)
 │       └── test/                    ← Unity unit tests (runs on desktop, no hardware)
-├── hardware_rev3_2/                 ← CURRENT hardware revision
-│   ├── REV3_2_CHANGES.md            ← What changed in 3.2 and why, with verification evidence
+├── hardware_rev3_3/                 ← CURRENT hardware revision (designed, not yet built)
+│   ├── REV3_3_CHANGES.md            ← What changed in 3.3 and why, verification evidence, open items
 │   ├── board_top.png / board_bottom.png
+│   ├── build_scripts/               ← Scripts that generated the 3.3 schematic, board and outputs
 │   └── hardware/
 │       ├── 350A_governor.kicad_sch  ← Schematic (KiCad 10)
 │       ├── 350A_governor.kicad_pcb  ← PCB layout (KiCad 10)
@@ -101,6 +100,7 @@ Beech215PropController/
 │       ├── JLCPCB_INSTRUCTIONS.md   ← PCB ordering steps
 │       └── gerbers/
 │           └── 350A_governor_JLCPCB.zip  ← Ready-to-upload Gerber package
+├── hardware_rev3_2/                 ← Previous revision (rotary-switch panel). Reference only; do not build
 └── hardware_archive/                ← Superseded revisions (rev1, rev3, rev3_1, april2026)
 ```
 
@@ -108,10 +108,10 @@ Beech215PropController/
 
 ## Quick Start
 
-1. **Order the PCB** — Upload `hardware_rev3_2/hardware/gerbers/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
-2. **Order components** — See [hardware_rev3_2/hardware/BOM.md](hardware_rev3_2/hardware/BOM.md). Total ~$55–95 for a complete build.
+1. **Order the PCB** — Upload `hardware_rev3_3/hardware/gerbers/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
+2. **Order components** — See [hardware_rev3_3/hardware/BOM.md](hardware_rev3_3/hardware/BOM.md). Total ~$50–90 for a complete build.
 3. **Assemble** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md). All through-hole components; no SMD soldering.
-4. **Flash firmware** — See [firmware/governor_350A/README.md](firmware/governor_350A/README.md) for full instructions (Arduino IDE, PlatformIO, and CLI). Set `PULSES_PER_REV` for your engine before flashing.
+4. **Flash firmware** — See [firmware/governor_350A/README.md](firmware/governor_350A/README.md) for full instructions (Arduino IDE, PlatformIO, and CLI). Set `PULSES_PER_REV`, `POT_RPM_MAX` and `POT_RPM_MIN` for your engine before flashing.
 5. **Bench test** — Build the test harness described in [docs/BENCH_TEST.md](docs/BENCH_TEST.md) and verify operation before touching the aircraft.
 6. **Install** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md) aircraft installation section. Have your IA present.
 
@@ -137,7 +137,7 @@ All early Bonanzas use Continental 6-cylinder engines. `PULSES_PER_REV = 3` is c
 This project is maintained by the Bonanza owner community. Pull requests welcome for:
 - Firmware improvements (better control algorithms, additional safety checks)
 - Documentation corrections
-- Hardware revisions (alternative component footprints, panel unit PCB)
+- Hardware revisions (alternative component footprints)
 - Flight test data and tuning recommendations
 
 Please open an issue before starting significant work so efforts aren't duplicated.

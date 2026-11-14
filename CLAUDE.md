@@ -3,9 +3,17 @@
 Open-source replacement electronics for the Airborne Electronics 350A
 solid-state propeller governor (STC SA2700WE), for Beechcraft Bonanzas
 (straight 35 through G35) with the Beech 215-210 electric prop. Replaces the
-original bang-bang control with proportional relay drive, an OLED panel, and
-five preset RPMs. Only the electronics inside the governor box change — the
-7-pin Cannon connector interface to the airframe is preserved exactly.
+original bang-bang control with proportional relay drive. Only the electronics
+inside the governor box change. The 7-pin Cannon connector **and the original
+panel RPM knob** (a 10k pot across pins E and F) are preserved exactly, and
+nothing else connects to the box.
+
+**Design constraint (Bill, 2026-11-14, relaying his mechanic): the unit must
+be functionally identical to the 350A it replaces** — same connector, same
+panel knob, same behaviour in use. The change is fully disclosed on the 337;
+the point is equivalence, not concealment. That ended the rotary-switch
+panel, the presets and the OLED as an aircraft feature. Do not propose adding
+panel hardware, extra wiring or new pilot-facing behaviour.
 
 This is Bill's own repo (`billmallard/Beech215PropController`, MIT), not a
 MakerPlane fork — the `makerplane/` pipelines (issue groomer, overnight
@@ -20,26 +28,36 @@ requiring Form 337 + IA — see [docs/REGULATORY.md](docs/REGULATORY.md)).
 The safety layers ARE the product:
 
 - 250ms hardware watchdog — `wdt_reset()` is the first line of `loop()`
-- Mag-signal-loss alarm (2s timeout) de-energizes both relays
-- RPM sanity band (400–3500) triggers alarm
-- 8s max continuous relay drive (`MAX_RELAY_MS`) independent of limit switches
-- Setpoint ramp (100 RPM/s) so preset changes never slam full duty
-- EMERGENCY/LOW preset (switch position 5) bypasses ramping by design
+- Mag-signal loss (2s timeout) de-energizes both relays. Non-latching since
+  v3.0, like the original: governing resumes once valid RPM is back
+- Panel-pot open circuit (reading above ~16k for 300ms) de-energizes both
+  relays; non-latching
+- RPM sanity band (400–3500) triggers a latched alarm
+- 8s max continuous relay drive (`MAX_RELAY_MS`), latched, independent of
+  limit switches
+- Setpoint ramp (100 RPM/s) so knob movements never slam full duty
+- The pulse interrupt rejects intervals under 2ms (magneto ringing)
 
 Never weaken one of these to fix a bug elsewhere. A control-loop change is
 not done until it has a matching unit test and, where behavior on the bench
 changes, a note in [docs/BENCH_TEST.md](docs/BENCH_TEST.md).
 
+Known open problem (not yet decided by Bill): the two latched alarms can only
+be cleared in the aircraft by cycling the prop switch, and the 8s timeout
+trips when the prop sits on a pitch stop. See "Decisions still open" in
+`hardware_rev3_3/REV3_3_CHANGES.md`.
+
 ## Layout
 
 | Path | What |
 |---|---|
-| `firmware/governor_350A/` | The entire firmware: one sketch (`governor_350A.ino`, v2.0), `platformio.ini`, `test/` |
-| `hardware_rev3_2/` | CURRENT hardware: `REV3_2_CHANGES.md`, board renders, `hardware/` (KiCad project, `Schematic.pdf`, `BOM.md`, `gerbers/` JLCPCB zip) |
+| `firmware/governor_350A/` | The entire firmware: one sketch (`governor_350A.ino`, v3.0), `platformio.ini`, `test/` |
+| `hardware_rev3_3/` | CURRENT hardware (designed 2026-11-14, **not yet built or tested**): `REV3_3_CHANGES.md`, board renders, `build_scripts/`, `hardware/` (KiCad project, `Schematic.pdf`, `BOM.md`, `DRC.rpt`, `gerbers/` JLCPCB zip) |
+| `hardware_rev3_2/` | Previous revision (rotary-switch panel). Has known faults; reference only |
 | `hardware_archive/` | rev1 / rev3 / rev3_1 / april2026 history — reference only, never edit |
 | `docs/` | ASSEMBLY, BENCH_TEST, WIRING, REGULATORY, TROUBLESHOOTING |
-| `docs/original_350A/` | Scanned original Airborne Electronics documentation (Richard Keiter) — reference only |
-| `350A_Digital_Governor_Spec.docx` | Design spec (repo root) |
+| `docs/original_350A/` | Scanned original Airborne Electronics documentation (Richard Keiter) — reference only. `gov_man.pdf` is text-extractable and is the authority on the original interface |
+| `350A_Digital_Governor_Spec.docx` | Design spec (repo root; predates Rev 3.3) |
 | `tools/security/scan_secrets.py` | Pre-commit secret scan (policy in `SECURITY.md`) |
 
 ## Build and test
@@ -48,13 +66,13 @@ changes, a note in [docs/BENCH_TEST.md](docs/BENCH_TEST.md).
 
 - `pio run` — AVR build (env `nanoatmega328`; Adafruit SSD1306 + GFX)
 - `pio run -t upload` then `pio device monitor --baud 9600` — flash + console
-- `pio test -e native` — 24 Unity tests, no hardware needed. `test/mocks/`
-  stubs all Arduino/AVR headers and the test file `#include`s the `.ino`
-  directly as one C++ translation unit.
+- `pio test -e native` — 61 Unity tests, no hardware needed. Needs `g++` on
+  PATH, which this Windows machine does not have: use the MSVC recipe in
+  [firmware/governor_350A/README.md](firmware/governor_350A/README.md).
+  `test/mocks/` stubs all Arduino/AVR headers and the test file `#include`s
+  the `.ino` directly as one C++ translation unit.
 - CI parity build: `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old`
   (what `codeql.yml` compiles)
-- Windows without MinGW: manual MSVC recipe in
-  [firmware/governor_350A/README.md](firmware/governor_350A/README.md)
 
 CI is CodeQL (c-cpp, builds the sketch) + Gitleaks, on push/PR/weekly.
 Pre-commit runs the secret scan on staged text files (`pre-commit install`
@@ -64,34 +82,54 @@ after clone).
 
 - Single-file sketch is deliberate (Arduino IDE users build this); comment
   density is high on purpose. Don't split into modules without Bill's OK.
-- `PULSES_PER_REV = 3` (6-cyl Continental) is the one must-set-per-engine
-  constant; 2 for 4-cylinder.
+- `PULSES_PER_REV = 3` (6-cyl Continental) is the must-set-per-engine
+  constant; 2 for 4-cylinder. `POT_RPM_MAX` (2650, knob full clockwise) and
+  `POT_RPM_MIN` (1800, full counter-clockwise) are placeholders awaiting
+  Bill's numbers.
+- Setpoint comes only from the panel pot on A7: `Rpot = 10k * adc / (1023 -
+  adc)`, linear in resistance. No presets, no EEPROM use.
+- Boots into AUTO and waits in standby until magneto pulses appear (the
+  aircraft's prop switch is what powers the box). Serial `m`/`a` are bench
+  overrides.
 - Control: 10Hz loop; relay duty is time-proportioned within each 100ms
   window (slow on/off for relay contacts, NOT fast PWM). Deadband ±25 RPM,
   proportional zone 75 RPM, minimum duty 25%.
-- Resources are tight: ~78% flash (~6KB headroom), ~67% RAM (~680B free
-  including stack). The Adafruit libs are most of it — avoid new `String`
-  usage and large locals.
+- Resources (v3.0, `pio run`): 74% flash, 33% static RAM. The Adafruit
+  display buffer takes another 1KB of heap when a display is fitted, so keep
+  print strings in flash with `F()` and avoid `String`.
 - Serial console at 9600: `s` status, `a`/`m` auto/manual, `c` clear alarm,
-  `1`–`5` simulate switch position, `?` help.
-- Presets 1–4 persist in EEPROM (magic `0xAE` at addr 0); defaults
-  2650 / 2450 / 2300 / 2200.
+  `?` help.
+- The display is optional and only probed at power-up.
 
 ## Hardware truths
 
-- Current line is **Rev 3.2** (2026-07-25). Relay driver is NPN (2N2222A) +
-  PNP (2N2907A) high-side pairs; the ULN2003A low-side driver was removed in
-  Rev 3.
-- Flyback diodes D3/D4 sit **across each relay coil circuit** (cathode to
-  the INC/DEC output, anode to GND). Rev 3/3.1 had them across the PNPs —
-  no clamping of the negative turn-off spike; caught by flight-test review.
-  All pre-3.2 physical boards need `docs/REWORK_FLYBACK_DIODES.md`. Change
-  record + verification evidence: `hardware_rev3_2/REV3_2_CHANGES.md`.
+- Current line is **Rev 3.3** (2026-11-14). No board of this revision exists
+  yet. Rev 3–3.2 boards must not be built: the PNP bases had no current
+  limit, the 6N137 enable pin was grounded, and the fuse footprint was for a
+  0.12A part. Full list: `hardware_rev3_3/REV3_3_CHANGES.md`.
+- J1: pin 5 (E) = pot sense with 10k pull-up to 5V, pin 6 (F) = ground,
+  pin 7 (H) = magneto, offset one header position for clearance. Nano A7 =
+  pot, A3/A6 = relay output readback (dividers fitted, firmware unused),
+  D2 = RPM, D6/D7 = relay drive.
+- The magneto isolating resistor (10k) is in the aircraft harness at the
+  magneto, not in the box; the board adds R1 + R9 (5.1k each). The opto needs
+  about 5mA, so it depends on P-lead peaks of roughly 100V. **Not yet measured
+  on the aircraft.** Relay coil current is also unmeasured.
+- Relay driver is NPN (2N2222A) + PNP (2N2907A) high-side pairs with 1k base
+  resistors. Flyback diodes D3/D4 sit across each relay coil circuit
+  (cathode to the INC/DEC output, anode to GND).
+- Layout rule for this board: all tracks on the top layer, bottom layer an
+  unbroken ground plane. Magneto nets are in netclass `MAG_HV` (2.5mm).
 - 6N137 optocoupler is speed-critical — no 4N25/4N35/PC817 substitutes.
 - KiCad files are **KiCad 10 format** (9.0 and 10.0 both installed — 9.0
   cannot open them). CLI toolchain that works headless:
   `C:\Program Files\KiCad\10.0\bin\kicad-cli.exe` (erc/drc/netlist/gerbers/
-  render) and the bundled `python.exe` with `pcbnew` for board edits.
+  render; `pcb drc --refill-zones --save-board` refills pours with project
+  rules) and the bundled `python.exe` with `pcbnew` for board edits.
+- Rev 3.3 was generated by `hardware_rev3_3/build_scripts/rebuild.sh`. Two
+  scripting gotchas: `pcbnew` return types break after `BOARD.Remove()` (strip
+  items from the file text before loading instead), and Git Bash heredocs
+  halve backslashes in inline Python (write scripts to files).
 
 ## Conventions and gotchas
 

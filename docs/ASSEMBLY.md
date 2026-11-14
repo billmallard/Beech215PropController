@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers the complete build from bare PCB to installed system. Estimated time for an experienced solderer: 3–4 hours for the governor PCB, 1 hour for the panel unit. First-time builders should budget a full day and not rush.
+This guide covers the complete build from bare PCB to installed system. Estimated time for an experienced solderer: 3–4 hours for the governor PCB. There is no panel unit to build on Rev 3.3. First-time builders should budget a full day and not rush.
 
 **Skill level required:** Basic soldering. All components are through-hole — no SMD. If you've built a kit before, you can build this.
 
@@ -29,7 +29,7 @@ This guide covers the complete build from bare PCB to installed system. Estimate
 
 ## Parts Checklist
 
-Verify all parts against [BOM.md](../hardware/BOM.md) before starting. Lay them out and identify each one. The most common build error is swapping similar-looking components (e.g., installing a 330Ω where a 10kΩ belongs). Resistor color bands are your friend — confirm each one with your multimeter before soldering.
+Verify all parts against [BOM.md](../hardware_rev3_3/hardware/BOM.md) before starting. Lay them out and identify each one. The most common build error is swapping similar-looking components (e.g., installing a 330Ω where a 10kΩ belongs). Resistor color bands are your friend — confirm each one with your multimeter before soldering.
 
 ---
 
@@ -58,12 +58,21 @@ The Gerbers in `hardware/gerbers/350A_governor_JLCPCB.zip` are ready to upload t
 
 | Ref | Value | Color Code | Location |
 |---|---|---|---|
-| R1 | 10kΩ | Brn-Blk-Org-Gold | Magneto input current limit |
-| R2 | 4.7kΩ | Yel-Vio-Red-Gold | Optocoupler pull-up |
+| R1, R9 | 5.1kΩ | Grn-Brn-Red-Gold | Magneto input series resistors |
+| R2 | 4.7kΩ | Yel-Vio-Red-Gold | Optocoupler pull-up — **pads are 15.24 mm apart; bend the leads wider** |
 | R3 | 330Ω | Org-Org-Brn-Gold | INC LED current limit |
 | R4 | 330Ω | Org-Org-Brn-Gold | DEC LED current limit |
 | R5, R6 | 1kΩ | Brn-Blk-Red-Gold | NPN base resistors (Q3, Q4) |
 | R7, R8 | 10kΩ | Brn-Blk-Org-Gold | PNP base pull-ups (Q1, Q2) |
+| R10, R12 | 10kΩ | Brn-Blk-Org-Gold | Driver input pull-downs |
+| R11, R13 | 1kΩ | Brn-Blk-Red-Gold | PNP base series resistors (Q1, Q2) |
+| R14, R16 | 33kΩ | Org-Org-Org-Gold | Relay readback dividers (top) |
+| R15, R17 | 10kΩ | Brn-Blk-Org-Gold | Relay readback dividers (bottom) |
+| R18, R19 | 10kΩ | Brn-Blk-Org-Gold | Panel control pull-up and series resistor |
+| R20, R21 | 4.7kΩ | Yel-Vio-Red-Gold | I2C pull-ups (optional display) |
+
+Color codes are for 4-band 5% parts; 1% metal-film parts carry five bands. Trust the meter, not the bands.
+On Rev 3.3 the resistor and diode designators are printed **inside** each part outline, so they are hidden once the part is fitted. Work from the silkscreen before you place each one.
 
 Resistors are non-polarized — orientation doesn't matter. Bend leads at 90°, insert, tape or bend leads slightly to hold in place, solder, trim leads flush.
 
@@ -76,6 +85,7 @@ Resistors are non-polarized — orientation doesn't matter. Bend leads at 90°, 
 | C1 | 100nF | 104 | Magneto noise bypass |
 | C4 | 100nF | 104 | VIN_5V supply bypass |
 | C5 | 100nF | 104 | 5V supply bypass |
+| C6 | 100nF | 104 | Panel control input filter |
 
 Ceramic caps are non-polarized. The "104" marking means 10 × 10⁴ pF = 100nF = 0.1µF. These are all the same part.
 
@@ -83,7 +93,7 @@ Ceramic caps are non-polarized. The "104" marking means 10 × 10⁴ pF = 100nF =
 
 | Ref | Value | Location | Notes |
 |---|---|---|---|
-| C2 | 100µF / 25V | LM2596 input | Longer lead = POSITIVE. Stripe on body = NEGATIVE. |
+| C2 | 100µF / 50V | 12V rail, top-left of board | Longer lead = POSITIVE. Stripe on body = NEGATIVE. Use a 50V part. |
 | C3 | 47µF / 10V | LM2596 output | Same polarity convention. |
 
 ⚠️ **Electrolytic capacitors installed backwards will fail, possibly violently.** The PCB has a "+" marking on the positive pad. The longer lead goes to "+". The stripe on the capacitor body marks the NEGATIVE lead.
@@ -110,18 +120,22 @@ The relay driver circuit uses two NPN+PNP transistor pairs — all TO-92 package
 
 **Pin orientation (critical):** Facing the flat side of the TO-92 body, pin order is **E – B – C** left to right for both types. The PCB silkscreen shows the flat body side — match it.
 
-**2N2907A package note:** The PCB footprint is TO-92L (wide/plastic body). Do not use the TO-18 metal-can variant — the lead spacing is incompatible.
+**2N2907A package note:** Plastic TO-92 only. Do not use the TO-18 metal-can variant. On Rev 3.3 the Q1/Q2 pads are 2.54 mm apart: spread the two outer leads a little before inserting.
 
-### 2.6 Protection Diodes and Fuse
+**2N2222A warning:** some parts sold as "2N2222A" in TO-92 (the ON Semi P2N2222A in particular) have the pinout reversed, C – B – E. Check the datasheet of the part you bought.
+
+### 2.6 Diodes and Fuse
 
 | Ref | Part | Notes |
 |---|---|---|
-| D3, D4 | 1N4001 | Flyback diodes — **cathode (banded end) toward the relay output pad, marked "K" on the silkscreen**. Each diode sits across its relay coil circuit: cathode to the INC/DEC output, anode to ground. Do not omit. |
-| F1 | 1A PTC fuse | In series with 12V_RAW input. Self-resets after overcurrent. Observe orientation per silkscreen. |
+| D3, D4 | 1N4001 | Flyback diodes across the relay coil circuits. **Cathode (banded end) to the pad marked "K"**. Do not omit. |
+| D5 | P6KE22A | Transient clamp on the 12V rail. Band to the "K" pad. It is the large diode next to the fuse. |
+| D6 | 1N4148 | Small glass diode beside U1; protects the optocoupler LED. Band to the "K" pad. |
+| F1 | 1A PTC fuse (0ZRE0100FF) | In series with the 12V input. Not polarized. Leads are 10.2 mm apart. |
 
-⚠️ **D3/D4 polarity:** Cathode (silver band) goes to the relay output side — match the "K" mark on the Rev 3.2 silkscreen. A reversed diode conducts DC through the relay coil and will blow the fuse or burn the diode.
+⚠️ **Diode polarity:** every diode's band goes to the "K" mark. A reversed D3 or D4 conducts DC through the relay coil; a reversed D5 shorts the 12V rail and trips the fuse.
 
-> **Building on a Rev 3 / Rev 3.1 board?** (No "REV 3.2" marking at bottom center of the board.) Those boards place D3/D4 across the drive transistors instead of across the relay coils, which provides no flyback clamping — the relay turn-off spike avalanches the semiconductors and radiates into the aircraft harness. Do not populate D3/D4 in their printed positions; follow [REWORK_FLYBACK_DIODES.md](REWORK_FLYBACK_DIODES.md) instead.
+> **Only build on a board marked "REV 3.3"** (bottom center). Rev 3, 3.1 and 3.2 boards have faults in the relay driver, the optocoupler enable pin and the fuse footprint, and no panel-control input. See [REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md).
 
 ### 2.7 IC Sockets (install before ICs)
 
@@ -138,18 +152,18 @@ Align the notch on the socket with the notch shown on the PCB silkscreen. Solder
 Install these before the Arduino socket — they need the iron to get in from the sides.
 
 **J1 — 7-pin Governor Cannon Interface Header:**
-- 1×7 2.54mm pin header
-- This is the most critical connector on the board — carries 12V, relay outputs, and the magneto signal
+- Cut an **8-position** strip of 2.54mm header and pull out the pin in position 7 (second from the end)
+- The seven remaining pins are, from the top: 12V (A), GND (B), INC (C), DEC (D), POT (E), RTN (F), gap, MAG (H)
+- This is the most critical connector on the board — carries 12V, relay outputs, the panel control and the magneto signal
 - Solder with care; cold joints here will cause intermittent failures
-- Label: A B C D E F H (per silkscreen)
 
 **PS1 — LM2596 Module Header:**
 - 1×5 2.54mm pin header
 - The LM2596 breakout module plugs in here
 
-**J2 — Panel Connector (10-pin):**
-- 1×10 2.54mm pin header or socket
-- Connects to the panel unit cable
+**J2 — Service Display Header (4-pin, optional):**
+- 1×4 2.54mm pin header: 5V, GND, SCL, SDA
+- Only needed if you want a display on the bench. Leave it off for the aircraft.
 
 ### 2.9 Arduino Nano Socket
 
@@ -157,7 +171,7 @@ Use two 15-pin female socket strips (or a 30-pin strip cut in half). This lets y
 
 - Install female sockets on the PCB pads
 - The Nano plugs in from above
-- Verify orientation: the USB port end of the Nano faces toward the top of the board (toward J1)
+- Verify orientation: the USB port sits over the "USB" outline on the silkscreen, toward the bottom edge of the board
 
 ### 2.10 IC Installation
 
@@ -198,12 +212,10 @@ Open `firmware/governor_350A/governor_350A.ino`. At the top of the file, find th
 #define PULSES_PER_REV  3    // 6-cyl Continental (IO-470, IO-520, E-185/E-225)
                              // Change to 2 for 4-cylinder engines
 
-// ── Preset RPM targets ─────────────────────────────────────────
-#define PRESET_MAX          2650   // Full fine pitch / takeoff
-#define PRESET_CRUISE_CLIMB 2450   // Best-power climb
-#define PRESET_CRUISE       2300   // Normal cruise (default on AUTO engage)
-#define PRESET_ECONOMY      2200   // Long-range economy
-// Preset 5 (Emergency/Low) drives to full coarse limit — no RPM target
+// ── Panel control range — SET FOR YOUR ENGINE ──────────────────
+#define POT_RPM_MAX         2650   // Knob full clockwise: take-off RPM
+#define POT_RPM_MIN         1800   // Knob full counter-clockwise: lowest RPM
+// These two are placeholders. Set them for your engine's limits.
 
 // ── Control tuning ─────────────────────────────────────────────
 #define DEADBAND_RPM        25     // No correction within ±25 RPM of setpoint
@@ -223,11 +235,12 @@ Open `firmware/governor_350A/governor_350A.ino`. At the top of the file, find th
 
 ### 3.5 Verify Firmware on Bench
 
-With the Nano connected by USB and powered (no aircraft connection yet):
-- The OLED should light up showing "MANUAL" mode
-- Rotating the encoder should not change anything in MANUAL
-- Pressing a preset button should change the setpoint display but not engage AUTO
-- No fault codes should be showing
+With the Nano connected by USB only (not in the board):
+- Open the Serial Monitor at 9600 baud
+- The banner should read `350A Digital Governor v3.0`
+- Type `s` for status and `?` for the command list
+
+Firmware v3.0 starts in AUTO and waits in standby (`NO MAG SIGNAL`) until it sees engine pulses. No display is needed.
 
 ---
 
@@ -277,7 +290,7 @@ Use a current-limited bench supply set to 13.8V / 500mA current limit.
 
 1. Do NOT connect the aircraft Cannon connector yet
 2. Apply 12V to J1 pin A and ground to J1 pin B using clip leads
-3. Current draw should be 50–150mA (OLED + Nano idle)
+3. Current draw should be about 30–100mA (Nano idle; more with a display fitted)
 4. If current limit trips immediately: **power off and find the short**
 
 ### 5.2 Voltage Rail Verification
@@ -286,70 +299,42 @@ With power applied:
 | Test point | Expected |
 |---|---|
 | LM2596 output | 5.0V ±0.1V |
-| Nano Vin pin | 5.0V |
-| Nano 5V pin | ~4.9–5.0V |
+| Nano 5V pin | 5.0V (the board feeds the 5V pin directly; VIN is not connected) |
+| U1 pin 8 and pin 7 | 5.0V |
+| J1 POT pin (E) with nothing connected | 5.0V; drops to about 2.5V with a 10kΩ resistor from E to F |
 | Nano 3.3V pin | 3.3V |
 
-### 5.3 OLED Display Check
+### 5.3 Optional Display Check
 
-The OLED should be showing the startup screen. If blank:
+If you fitted J2 and plugged in an SSD1306 display before power-up, it should show the startup screen. If blank:
+- Check the module pin order against J2 (5V, GND, SCL, SDA)
 - Check I2C address — SSD1306 modules ship at either 0x3C or 0x3D. The firmware defaults to 0x3C. If blank, edit `#define OLED_I2C_ADDR 0x3C` to `0x3D` and reflash.
-- Check the J2 connector — confirm SDA (pin 3) and SCL (pin 4) are wired to Nano A4 and A5
+- The display is only detected at power-up. Plugging it in afterwards does nothing until the next power cycle.
 
 ---
 
-## Section 6: Panel Unit Assembly
+## Section 6: Panel Control
 
-The panel unit mounts in the existing prop control knob opening on the instrument panel.
+Rev 3.3 uses the panel control that is already in the aircraft. There is no panel unit to build.
 
-### 6.1 Components
+### 6.1 Check the Existing Control
 
-- SSD1306 1.3" OLED module (I2C, 128×64)
-- 5-position single-pole rotary switch (Lorlin CK1024 or Grayhill 56-series recommended)
-- Small panel plate or project enclosure
+With the 7-pin connector unplugged from the governor (original manual, Service Note 1, step 5):
 
-### 6.2 Layout Suggestion
+1. Ohmmeter between pins E and F of the cable connector
+2. Knob full clockwise: under 100Ω
+3. Knob full counter-clockwise: about 10,000Ω
+4. The reading should change smoothly, with no jumps or open spots, from stop to stop
 
-```
-┌─────────────────────────────────────────────┐
-│  [OLED DISPLAY — 1.3"]                      │
-│  CRUISE                              AUTO   │
-│  CRUISE                                     │
-│  ─────────────────────────────              │
-│  SET: 2300 RPM                              │
-│  ACT: 2287 RPM                              │
-│  HOLD ──────────────────                    │
-├─────────────────────────────────────────────┤
-│         MAX  CLB  CRS  ECO  LOW             │
-│        [ 1 - 2 - 3 - 4 - 5 ]               │
-│              [  KNOB  ]                     │
-└─────────────────────────────────────────────┘
-```
+A control that jumps or goes open will make the RPM setting jump. Firmware v3.0 treats a reading above about 16kΩ as an open wire and stops driving the relays until it recovers.
 
-The 5-position rotary switch provides tactile, positive detent selection of each preset. There is no ambiguous "between" state in normal use — each detent corresponds to a specific RPM.
+### 6.2 If the Control Must Be Replaced
 
-### 6.3 Rotary Switch Wiring
+Use a 10kΩ **linear taper** panel potentiometer (marked "B10K") wired as a two-terminal rheostat: the wiper, plus whichever end terminal gives minimum resistance at full clockwise. Audio-taper ("A10K") parts are far more common and are the wrong part. Mount and torque per the original manual (shoulder nut 24 inch-pounds).
 
-The switch has one COMMON terminal and five position terminals:
+### 6.3 What the Knob Does
 
-```
-Switch COMMON  ──── GND  (J2 pin 2 or pin 10)
-Position 1     ──── J2 pin 5  (MAX 2650)
-Position 2     ──── J2 pin 6  (CRUISE CLIMB 2450)
-Position 3     ──── J2 pin 7  (CRUISE 2300)
-Position 4     ──── J2 pin 8  (ECONOMY 2200)
-Position 5     ──── J2 pin 9  (LOW/EMERGENCY COARSE)
-```
-
-No resistors needed. The Nano's internal pull-ups (activated in firmware) keep all position lines HIGH. The selected position pulls its line LOW through the switch.
-
-### 6.4 Panel Cable
-
-10-conductor shielded cable, J2 connector at both ends (or bare wires at the switch end). Total wires: 5V, GND, SDA, SCL, positions 1–5, switch common = 10. The original installation's cable routing can be reused.
-
-### 6.5 Reusing the Original Knob
-
-The original prop control knob fits any ¼" D-shaft rotary switch. The Lorlin CK1024 and Grayhill 56-series both use standard ¼" shafts. If the original knob has a different bore, knob adapters are available from Mouser for ~$1.
+Full clockwise is the highest RPM (`POT_RPM_MAX`), full counter-clockwise the lowest (`POT_RPM_MIN`), linear in between. When the knob is moved the governor walks to the new RPM at 100 RPM per second rather than jumping.
 
 ---
 
@@ -379,13 +364,9 @@ See [BENCH_TEST.md](BENCH_TEST.md) for the complete bench test procedure using a
 3. Mount on the original spacers using the same 4 screws
 4. Connect the Cannon connector — verify locking ring engages
 
-### 8.3 Install the Panel Unit
+### 8.3 Panel Control
 
-1. Remove the original prop control knob assembly
-2. Feed the panel unit cable through the control column per the original cable routing
-3. Install the panel unit in the knob opening
-4. Route cable clear of all control cables and moving parts — secure with tie wraps
-5. The original knob can be reused on the new linear pot shaft
+Leave the existing panel control and its wiring in place. Check it per Section 6.1 before plugging the connector into the new governor.
 
 ### 8.4 Ground Test Before First Flight
 
@@ -400,8 +381,8 @@ Follow the Ground Test section of the original 350A manual (reproduced in the fi
 
 1. Takeoff and climb in MANUAL — as normal
 2. At safe altitude, level off at cruise power
-3. Select CRUISE preset (2300)
-4. Engage AUTO
+3. Turn the RPM knob to about mid-range
+4. Prop switch to AUTO
 5. Observe: RPM should stabilize within 3–5 corrections
 6. Make small throttle inputs and verify governor compensates smoothly
 7. If hunting is excessive, increase DEADBAND_RPM in firmware (try 35, then 50) and reflash
@@ -424,6 +405,7 @@ Follow the Ground Test section of the original 350A manual (reproduced in the fi
 |---|---|---|
 | 1.0 | Initial release | First production version |
 | 3.0 | 2026-04-27 | V3 PCB: ULN2003A (U2) replaced by discrete NPN+PNP transistor pairs (Q1–Q4); added flyback diodes D3/D4 and PTC fuse F1; J3 removed; C3 changed to 10V rating; added R5–R8 |
+| 3.3 | 2026-11-14 | Panel control returned to the original 10kΩ pot on connector pins E/F (rotary switch, presets and panel unit removed; J2 is now an optional 4-pin display header). Relay driver base resistors and input pull-downs added, optocoupler enable pin corrected, fuse footprint corrected, 12V transient clamp and magneto input protection added, board re-routed with a solid ground plane. Needs firmware v3.0. Details: [REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md) |
 | 3.2 | 2026-07-25 | Flyback diodes D3/D4 relocated from across the 2N2907A transistors to across the relay coil circuits (cathode to relay output, anode to ground) per flight-test engineering feedback — the previous placement provided no clamping of the negative turn-off spike. 12V rail rerouted around D3. "REV 3.2" silkscreen added for board identification. Existing Rev 3/3.1 boards: see [REWORK_FLYBACK_DIODES.md](REWORK_FLYBACK_DIODES.md) |
 
 ---

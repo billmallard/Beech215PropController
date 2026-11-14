@@ -1,32 +1,36 @@
 # Troubleshooting Guide
 
-## Fault Codes and Display Messages
+## Status and Fault Messages (firmware v3.0)
 
-| Display Message | Meaning | Action |
-|---|---|---|
-| `NO MAG SIGNAL` | No magneto pulses for >2 seconds | Check Pin H wiring; check right magneto P-lead; try switching to left magneto |
-| `RELAY TIMEOUT` | INC or DEC relay held on >8 seconds without RPM change | Prop may be at pitch limit; check limit switches; motor may be stalled |
-| `EEPROM DEFAULT` | EEPROM unformatted or corrupt | First-boot normal; presets reset to defaults |
-| `LOW VOLTAGE` | Supply voltage below 10V | Check prop circuit breaker; check wiring to Pin A |
-| `MAG JITTER` | RPM reading unstable despite stable throttle | Magneto needs service; try switching to left magneto (Pin H) |
+In the aircraft there is no display. These messages appear on the USB serial console (9600 baud, type `s`)
+and on the optional bench display.
+
+| Message | Type | Meaning | Action |
+|---|---|---|---|
+| `NO MAG SIGNAL` | Standby — clears itself | No valid magneto pulses for more than 2 seconds, or the engine is not running. Both relays are off. Governing resumes when pulses return | Normal with the engine stopped. With the engine running: check the Pin H lead and the resistor-lug assembly at the right magneto (original Service Note 8) |
+| `POT OPEN` | Standby — clears itself | The panel control reads above about 16kΩ (open wire or worn control). Both relays are off | Check the control between connector pins E and F: under 100Ω full clockwise, 10kΩ full counter-clockwise, smooth in between |
+| `RELAY TIMEOUT` | Latched | One relay was commanded for more than 8 seconds without reaching the set RPM | The prop may be on a pitch stop, the motor stalled, or a limit switch open. Clears on the serial `c` command or by cycling the prop switch out of AUTO and back |
+| `RPM OUT OF RANGE` | Latched | Measured RPM below 400 or above 3500 | Usually a noisy magneto signal or the wrong `PULSES_PER_REV`. Clears as above |
+
+The INC (red) and DEC (green) LEDs on the board follow the relay outputs.
 
 ---
 
 ## Symptom-Based Troubleshooting
 
-### Problem: OLED is blank at power-on
+### Problem: optional bench display is blank at power-on
 
 1. Verify 5V is present at LM2596 output — check with multimeter at PS1 pins 3 and 4
 2. Check LM2596 is plugged into PS1 header correctly (not reversed)
-3. Verify OLED module is connected: SDA → Nano A4, SCL → Nano A5, VCC → 5V, GND → GND
+3. Verify the display module pin order matches J2: 5V, GND, SCL, SDA. The display is only detected at power-up
 4. Try alternate I2C address: change `#define OLED_I2C_ADDR 0x3C` to `0x3D` in firmware and reflash
 5. Connect Nano via USB to a computer and open Serial Monitor — should show boot messages at 9600 baud
 
-### Problem: ACT RPM shows `----` or zero
+### Problem: no RPM reading (status stays `NO MAG SIGNAL` with the engine running)
 
 1. Verify magneto signal is connected at J1 Pin H
-2. Check R1 (10kΩ) is installed between Pin H and U1 pin 2 (MAG_ANODE)
-3. Check U1 (6N137) is seated correctly in socket — pin 1 notch toward board edge
+2. Check R1 and R9 (5.1kΩ each) are installed in series between Pin H and U1 pin 2, and D6 (1N4148) is the right way round
+3. Check U1 (6N137) is seated correctly in its socket, pin 1 matching the silkscreen notch. U1 pin 7 and pin 8 should both read 5V
 4. Check R2 (4.7kΩ pull-up) installed between 5V and U1 output
 5. With engine running: put scope or multimeter on U1 pin 6 — should see pulses at ~90–133 Hz range
 6. Try left magneto: disconnect Pin H from right magneto P-lead, temporarily connect to left magneto P-lead (requires re-routing or a switch)
@@ -62,20 +66,14 @@ This is the problem this controller was designed to fix. If hunting persists aft
   1. Swap J1 pins C and D in the aircraft connector
   2. Edit firmware: swap `D6_INC_RELAY` and `D7_DEC_RELAY` pin definitions and reflash
 
-### Problem: Emergency/Low preset doesn't stop at full coarse
+### Problem: RPM does not follow the panel knob
 
-- Full coarse limit switch not in the relay circuit, or limit switch wiring reversed
-- See original 350A Service Note 1, Section 7 (Relay and Limit Switch Test) for diagnostic
-- Verify limit switch wires were reconnected correctly after last prop overhaul
+1. Type `s` on the serial console. If it reports `POT_OPEN`, the control or its wiring is open
+2. With the connector unplugged from the governor, measure between pins E and F while turning the knob (see the table above)
+3. On the board, the POT pin of J1 should read 5V with nothing connected and fall toward 0V as the knob goes clockwise
+4. Remember the setpoint ramps at 100 RPM per second: a full sweep of the knob takes several seconds to arrive
 
-### Problem: Preset buttons not responding
-
-1. Verify button wiring to correct Nano pins (D10, D11, D12, A1)
-2. Buttons should connect the Nano pin to GND — firmware uses internal pull-ups
-3. Check continuity across button contacts with multimeter in beep mode
-4. Verify J2 connector seating
-
-### Problem: OLED shows correct SET but incorrect ACT RPM
+### Problem: governed RPM disagrees with the panel tachometer
 
 - Check panel tachometer calibration — see original 350A Service Note 5 (fluorescent lamp test)
 - Check `PULSES_PER_REV` setting
@@ -111,7 +109,7 @@ If motor runs but doesn't stop at limit: limit switches not in circuit, or wired
 
 Poor magneto signal quality (weak impulse springs, worn rubber couplings, deteriorated P-lead filter) causes the RPM reading to jitter, which causes the governor to overcorrect.
 
-**Quick check:** In flight, watch the `ACT:` RPM reading on the OLED. At steady cruise with stable throttle and altitude:
+**Quick check:** Watch the actual RPM on the serial console (or the bench display) during a ground run, or the panel tachometer in flight. At a steady power setting:
 - **Good signal:** ACT reading holds within ±15 RPM
 - **Marginal signal:** ACT reading bounces ±25–40 RPM despite stable flight
 - **Bad signal:** ACT reading swings ±50+ RPM or shows erratic jumps
@@ -122,22 +120,19 @@ Poor magneto signal quality (weak impulse springs, worn rubber couplings, deteri
 
 ---
 
-## Factory Defaults (after EEPROM reset)
+## Firmware Defaults (v3.0)
 
-If EEPROM is cleared (new Nano, or deliberate reset), firmware boots with:
+Firmware v3.0 stores nothing in EEPROM. These are compile-time constants at the top of the sketch:
 
 | Parameter | Default |
 |---|---|
 | PULSES_PER_REV | 3 |
-| Preset 1 (MAX) | 2650 RPM |
-| Preset 2 (CLIMB) | 2450 RPM |
-| Preset 3 (CRUISE) | 2300 RPM |
-| Preset 4 (ECONOMY) | 2200 RPM |
-| Preset 5 (LOW) | Full coarse |
+| POT_RPM_MAX (knob full clockwise) | 2650 RPM — placeholder, set for your engine |
+| POT_RPM_MIN (knob full counter-clockwise) | 1800 RPM — placeholder, set for your engine |
+| Setpoint ramp | 100 RPM/sec |
 | Deadband | 25 RPM |
 | Proportional zone | 75 RPM |
-| Default active preset | CRUISE |
-| Mode at power-on | MANUAL |
+| Mode at power-on | AUTO (standby until engine pulses are seen) |
 
 ---
 
@@ -148,7 +143,7 @@ If EEPROM is cleared (new Nano, or deliberate reset), firmware boots with:
 3. Open a GitHub issue with:
    - Aircraft serial number range (D-XXXX)
    - Engine model
-   - Firmware version (shown on OLED startup screen)
+   - Firmware version (first line printed on the serial console at power-up)
    - Description of symptom
    - What you've already tried
 4. American Bonanza Society forums — experienced members may have seen the same issue

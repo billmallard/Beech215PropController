@@ -1,5 +1,12 @@
 # Mandatory Rework — Flyback Diodes D3/D4 (Rev 3 and Rev 3.1 Boards)
 
+> **Superseded 2026-11-14.** A design review of Rev 3.2 found further faults
+> shared by every Rev 3, 3.1 and 3.2 board: no current limit on the PNP bases,
+> the optocoupler enable pin tied to ground, and a fuse footprint for the wrong
+> part. This rework fixes the flyback clamp only. **It does not make a
+> pre-3.3 board fit to fly.** See
+> [hardware_rev3_3/REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md).
+
 **Applies to:** every board fabricated before Rev 3.2 — the April 2026 PCBWay
 run (Rev 3) and any board built from the Rev 3.1 JLCPCB package. Rev 3.2
 boards are marked **"REV 3.2"** on the front silkscreen at bottom center; if

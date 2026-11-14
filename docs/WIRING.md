@@ -1,45 +1,57 @@
 # Wiring Reference
 
+Applies to hardware Rev 3.3 and firmware v3.0. For Rev 3.2 and earlier (rotary
+switch panel) see the copy of this file in git history.
+
 ## 7-Pin Governor Cannon Connector (J1)
 
-This is the aircraft-side connector. **Pinout is identical to the original 350A.** No aircraft wiring changes are required.
+This is the aircraft-side connector. **The pinout and the function of every pin
+are the same as the original 350A.** No aircraft wiring changes are required,
+and the governor needs no other connection.
 
-| Pin | Letter | Signal | Wire Color (typical) | Description |
+| J1 pin | Letter | Board net | Wire Color (typical) | Description |
 |---|---|---|---|---|
-| 1 | A | 12V_RAW | Red | Aircraft bus through prop circuit breaker and AUTO/OFF switch |
+| 1 | A | 12V_IN | Red | Aircraft bus through prop circuit breaker and the prop switch AUTO position |
 | 2 | B | GND | Black/Green | Airframe ground |
 | 3 | C | INC_RELAY | Varies | 12V output: energizes INC RPM relay (fine pitch / increase RPM) |
 | 4 | D | DEC_RELAY | Varies | 12V output: energizes DEC RPM relay (coarse pitch / decrease RPM) |
-| 5 | E | POT_END_1 | Varies | One end of panel rheostat/potentiometer |
-| 6 | F | POT_END_2 | Varies | Other end of panel rheostat/potentiometer |
-| 7 | H | MAG_P_LEAD | White | Right magneto P-lead (through 10kΩ isolating resistor in governor) |
+| 5 | E | POT_HI | Varies | One end of the panel RPM control |
+| 6 | F | GND | Varies | Other end of the panel RPM control (grounded on the board) |
+| 7 | H | MAG_LEAD | White | Right magneto P-lead, through the 10kΩ isolating resistor in the harness |
 
-**Note on pins E and F:** In the original installation these are the two ends of the panel rheostat. In the rotary switch implementation, pin E carries GND to the panel (switch COMMON). Pin F is spare. The 10-wire J2 panel cable handles all panel unit connections directly without needing J1 pins E/F for signal routing.
+**On the board, J1 is seven pins on an 8-position header: positions 1–6 and 8.**
+Position 7 is left empty so the magneto pin (H) sits 5 mm from its neighbour.
+The silkscreen reads 12V, GND, INC, DEC, POT, RTN, (gap), MAG.
+
+**Pins E and F — the panel control.** The original panel control is a 10kΩ
+linear control wired as a two-terminal rheostat. The original manual's check
+(Service Note 1, step 5): under 100Ω between E and F with the knob full
+clockwise, 10,000Ω full counter-clockwise, changing smoothly in between. Full
+clockwise is the take-off (highest) RPM. The board reads that resistance; it
+does not matter which of the two wires is on E and which is on F.
+
+**Pin H — the magneto lead.** The isolating resistor is part of the aircraft
+harness, at the magneto end, not inside the governor (original manual: pin H
+reads 10,000Ω ±10% to ground). The board adds its own 10.2kΩ in series.
 
 ---
 
-## Panel Unit to PCB Cable (J2 — single connector)
+## Service Display Header (J2) — optional
 
-A single 10-conductor shielded cable connects the panel unit to the governor box. The rotary switch replaces the original pot, 5 buttons, and encoder — **10 wires does the whole job.**
+J2 is a 4-pin header for an SSD1306 I2C display. It is a bench and
+troubleshooting aid. **It is not part of the aircraft installation**; leave it
+unpopulated or unplugged in the aircraft. The firmware checks for a display at
+power-up and runs normally without one.
 
-### J2 — 10-pin Panel Connector
+| Pin | Signal |
+|---|---|
+| 1 | +5V |
+| 2 | GND |
+| 3 | SCL |
+| 4 | SDA |
 
-| Pin | Signal | Panel Connection |
-|---|---|---|
-| 1 | +5V | OLED VCC |
-| 2 | GND | OLED GND, switch common (both tie here) |
-| 3 | SDA | OLED I2C data |
-| 4 | SCL | OLED I2C clock |
-| 5 | SW_POS1 | Switch position 1 terminal (MAX 2650) |
-| 6 | SW_POS2 | Switch position 2 terminal (CRUISE CLIMB 2450) |
-| 7 | SW_POS3 | Switch position 3 terminal (CRUISE 2300) |
-| 8 | SW_POS4 | Switch position 4 terminal (ECONOMY 2200) |
-| 9 | SW_POS5 | Switch position 5 terminal (LOW/EMERGENCY COARSE) |
-| 10 | SW_COMMON | Switch COMMON terminal (ties to GND at panel or at PCB) |
-
-**Switch wiring principle:** The rotary switch COMMON terminal is connected to GND (pin 10 / pin 2). Each position terminal goes to its respective signal wire (pins 5–9). Internal pull-ups in the Nano keep all signal lines HIGH; whichever position is selected pulls its line LOW through the switch. No external resistors needed anywhere in the switch circuit.
-
-**Note on SW_COMMON:** Pin 10 and Pin 2 are both GND — you can tie the switch common directly to pin 2 at the panel connector if that's easier, and leave pin 10 unused. The separate pin 10 just makes the wiring cleaner.
+Display modules do not agree on pin order. Check yours against this table
+before plugging it in. The board has 4.7kΩ pull-ups on SCL and SDA.
 
 ---
 
@@ -48,22 +60,22 @@ A single 10-conductor shielded cable connects the panel unit to the governor box
 | Nano Pin | Function | Direction | Notes |
 |---|---|---|---|
 | D2 | RPM_PULSE | Input | 6N137 optocoupler output; hardware interrupt INT0 |
-| D3 | SW_POS1 | Input | Rotary switch position 1 (MAX 2650); internal pull-up |
-| D4 | SW_POS2 | Input | Rotary switch position 2 (CRUISE CLIMB 2450); internal pull-up |
-| D5 | SW_POS3 | Input | Rotary switch position 3 (CRUISE 2300); internal pull-up |
-| D6 | INC_RELAY_DRIVE | Output | To PNP transistor base (via 1kΩ); high-side switches +12V to INC relay coil |
-| D7 | DEC_RELAY_DRIVE | Output | To PNP transistor base (via 1kΩ); high-side switches +12V to DEC relay coil |
-| D8 | INC_LED | Output | Red LED via 330Ω; INC activity indicator |
-| D9 | DEC_LED | Output | Green LED via 330Ω; DEC activity indicator |
-| D10 | SW_POS4 | Input | Rotary switch position 4 (ECONOMY 2200); internal pull-up |
-| D11 | SW_POS5 | Input | Rotary switch position 5 (LOW/EMERGENCY COARSE); internal pull-up |
-| D12 | (spare) | — | Available for future use |
-| A0 | (spare) | — | Available for future use |
-| A1 | (spare) | — | Available for future use |
-| A4 | SDA | I2C | OLED display data (Wire library) |
-| A5 | SCL | I2C | OLED display clock (Wire library) |
-| VIN | 5V_INPUT | Power | From LM2596 5V output |
-| GND | GND | Power | Multiple ground connections |
+| D6 | INC drive | Output | HIGH = INC relay on. NPN level shifter then PNP high-side switch |
+| D7 | DEC drive | Output | HIGH = DEC relay on |
+| D8 | INC_LED | Output | Red LED via 330Ω |
+| D9 | DEC_LED | Output | Green LED via 330Ω |
+| A3 | INC_SENSE | Analog in | INC relay output through a 33k/10k divider (output ÷ 4.3). Not used by firmware v3.0 |
+| A6 | DEC_SENSE | Analog in | DEC relay output through a 33k/10k divider. Not used by firmware v3.0 |
+| A7 | POT_SENSE | Analog in | Panel control. 10kΩ pull-up to 5V on pin E, 10kΩ series, 100nF |
+| A4 | SDA | I2C | Optional display |
+| A5 | SCL | I2C | Optional display |
+| +5V | VCC5 | Power | From the LM2596 5V output (the +5V pin, not VIN) |
+| GND | GND | Power | Two ground pins |
+| D3, D4, D5, D10, D11, D12, D13, A0, A1, A2 | — | — | Unused. D3–D5, D10, D11 carried the rotary switch on Rev 3.2 |
+
+**Pot reading.** `adc = 1023 × Rpot / (Rpot + 10k)`. A 0–10kΩ control reads
+0–512. An open wire reads about 1023 and the firmware treats it as a fault. A
+shorted wire reads 0, which is the same as full clockwise, as on the original.
 
 ---
 
@@ -95,7 +107,7 @@ See the original 350A Service Note 9 (MANUAL WIRING) and Figures C and D in the 
 
 ## Limit Switch Wiring
 
-The full fine and full coarse limit switches live in the prop hub and connect through the slip ring assembly. Their wires emerge from the rear of the prop hub. They are in series with the relay contacts — when a limit is reached, the switch opens and the motor stops regardless of what the governor commands.
+The full fine and full coarse limit switches live in the prop hub and connect through the slip ring assembly. Their wires emerge from the rear of the prop hub. They are in series with the relay coils — when a limit is reached, the switch opens and the motor stops regardless of what the governor commands.
 
 | Limit | Switch State (at limit) | Effect |
 |---|---|---|
@@ -110,29 +122,31 @@ The full fine and full coarse limit switches live in the prop hub and connect th
 
 | Signal | Level | Notes |
 |---|---|---|
-| 12V supply | 11–15V | Aircraft battery/alternator bus; tolerant of normal variation |
-| Magneto P-lead | 0–12V | Coil fires produce brief ground pulses; rest state is ~12V |
-| Relay drive (C, D) | 0V or 12V | Bang-bang for large errors; time-proportioned in proportional zone |
-| 5V logic (Nano, OLED, optocoupler) | 5.0V ±5% | Generated by LM2596 from aircraft bus |
-| I2C bus (SDA, SCL) | 0–5V | 400kHz fast-mode; 4.7kΩ pull-ups on each line |
-| ADC input (pot wiper) | 0–5V | Linear across 0–10kΩ pot sweep; 50-sample averaged |
+| 12V supply | 11–15V | Aircraft bus. A 22V transient clamp and a 1A resettable fuse sit at the input |
+| Magneto P-lead at pin H | Pulses, not a logic level | Grounded while the points are closed; rings to a high voltage in both polarities when they open. **Not yet measured on the aircraft** — see hardware_rev3_3/REV3_3_CHANGES.md |
+| Relay drive (C, D) | 0V or bus voltage | Sourced from the bus through a 2N2907A. Full on for large errors; time-proportioned near the setpoint |
+| 5V logic | 5.0V ±5% | Generated by the LM2596 module from the aircraft bus |
+| Panel control (pin E) | 0–2.5V | 10kΩ pull-up to 5V against the 0–10kΩ control; 5V if the wire is open |
+| I2C (SDA, SCL) | 0–5V | Only when a display is fitted |
 
 ---
 
 ## Pinout Cross-Reference: Original 350A vs. New Board
 
-For IAs doing the 337 review, this table shows the complete equivalence of the external interface:
+For IAs doing the 337 review, this table shows the equivalence of the external interface:
 
-| Original 350A Pin | Original Function | New Board Pin | New Function | Equivalent? |
-|---|---|---|---|---|
-| A | 12V supply input | J1-A | 12V_RAW | ✓ Identical |
-| B | Airframe ground | J1-B | GND | ✓ Identical |
-| C | INC RPM relay coil drive | J1-C | INC_RELAY_DRIVE | ✓ Equivalent — see note below |
-| D | DEC RPM relay coil drive | J1-D | DEC_RELAY_DRIVE | ✓ Equivalent — see note below |
-| E | Rheostat end 1 | J1-E | SW_COMMON (GND) | ✓ Functionally equivalent — switch common replaces rheostat end; GND is carried to panel |
-| F | Rheostat end 2 | J1-F | Spare / NC | ✓ Pin present; unused in rotary switch implementation |
-| H | Magneto P-lead sense | J1-H | MAG_P_LEAD (through 10kΩ isolator) | ✓ Identical; isolator preserved |
+| Pin | Original function | New board | Same? |
+|---|---|---|---|
+| A | 12V supply input | 12V supply input | Yes |
+| B | Airframe ground | Ground | Yes |
+| C | INC RPM relay coil drive (+12V switched) | INC RPM relay coil drive (+12V switched) | Yes |
+| D | DEC RPM relay coil drive (+12V switched) | DEC RPM relay coil drive (+12V switched) | Yes |
+| E | Panel RPM control, end 1 | Panel RPM control, sensed | Yes — same control, same two wires |
+| F | Panel RPM control, end 2 | Panel RPM control, return | Yes |
+| H | Magneto P-lead sense (10kΩ isolator in harness) | Magneto P-lead sense (same harness isolator, plus 10.2kΩ on the board) | Yes |
 
-The relay coil loads (current draw on C and D) are identical. The magneto input impedance is identical (10kΩ isolating resistor preserved in the new design). The power supply loading on pin A is lower (switching regulator vs. linear), which is a improvement. No airframe wiring changes are needed or permitted without additional 337 documentation.
+No airframe wiring changes are needed or permitted without additional 337 documentation.
 
-**Note on J1-C and J1-D relay drive polarity:** The original 350A is a **high-side driver** — it switches +12V onto pins C and D to energize the relay coils. The relay circuits in the aircraft are wired with the coil's cold side grounded through the pitch-limit switches, so the hot side (+12V) must be switched by the governor. The new board uses **PNP transistors** (one per relay channel) as high-side switches, providing the same +12V-switched output on J1-C and J1-D. The NPN ULN2003A Darlington array found in many Arduino relay tutorials is **not compatible** with this wiring — it provides a ground-side switch, which is the wrong topology for this circuit.
+**Relay drive polarity.** The original 350A is a **high-side driver** — it switches +12V onto pins C and D to energize the relay coils, whose other ends return to ground through the pitch-limit switches. The new board does the same with one PNP transistor per channel. A ground-side driver such as the ULN2003A is not compatible with this wiring.
+
+**What has not been compared.** The equivalence above is about the connector. The original's relay coil current, its magneto input sensitivity and its RPM-versus-knob-angle curve have not been measured, so the new board's behaviour on those three points is by design intent, not by test.
