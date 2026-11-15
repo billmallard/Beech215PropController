@@ -61,13 +61,17 @@
 
 // ── SAFETY LIMITS ─────────────────────────────────────────────────────────────
 #define MAG_TIMEOUT_MS      2000    // Relays off if no valid magneto pulse for 2 seconds
-#define MAX_RELAY_MS        8000    // Safety: max relay on-time without RPM movement
+#define RPM_MIN_VALID       400     // A reading below this is not governed (relays off)
+// There is deliberately no upper RPM limit. A high reading is governed like any
+// other: the governor commands a decrease, which is what the original does and
+// what a real overspeed needs.
 #define RPM_AVG_SAMPLES     8       // Rolling average depth for noise rejection
 
 // ── MAGNETO PULSE QUALIFICATION ───────────────────────────────────────────────
 // A magneto primary rings when the points open, so one firing can produce
 // several edges. Edges closer than MIN_PULSE_US to the last accepted pulse are
-// ignored. Must stay well below the shortest real period:
+// ignored. Must stay well below the shortest real period. Even at 3500 RPM,
+// far beyond any redline:
 //   3500 RPM x 3 pulses/rev = 175 Hz = 5714 us.   (2 pulses/rev: 8571 us)
 #define MIN_PULSE_US        2000UL
 // A gap longer than this is not an RPM measurement (signal dropout, engine
@@ -112,17 +116,18 @@
 #define SCREEN_HEIGHT   64
 
 // ── SYSTEM STATE ──────────────────────────────────────────────────────────────
-enum ControlMode { MODE_MANUAL, MODE_AUTO, MODE_ALARM };
+enum ControlMode { MODE_MANUAL, MODE_AUTO };
 enum RelayState  { RELAY_OFF, RELAY_INC, RELAY_DEC };
 
-// Why the governor is in AUTO but not driving. These are NOT alarms: the
+// Why the governor is in AUTO but not driving. Nothing here latches: the
 // relays are held off and governing resumes by itself when the cause clears.
-enum HoldReason  { HOLD_NONE, HOLD_NO_MAG, HOLD_POT_OPEN };
+// The firmware has no latched alarm of any kind, because the aircraft has
+// no way to reset one except the prop switch, and the original has none.
+enum HoldReason  { HOLD_NONE, HOLD_NO_MAG, HOLD_RPM_LOW, HOLD_POT_OPEN };
 
 ControlMode currentMode  = MODE_MANUAL;   // setup() ends in MODE_AUTO
 RelayState  relayState   = RELAY_OFF;
 HoldReason  holdReason   = HOLD_NO_MAG;   // Nothing is known about RPM at power-up
-const char* alarmMessage = "";            // Always points at a string literal
 
 // ── SETPOINT RAMP STATE ───────────────────────────────────────────────────────
 float    targetSetpoint = (float)POT_RPM_MIN; // Where the knob is pointing
@@ -153,7 +158,6 @@ float    actualRPM       = 0.0;
 uint32_t lastMagPulse_ms = 0;
 
 // ── RELAY TIMING ──────────────────────────────────────────────────────────────
-uint32_t relayOnTime_ms    = 0;
 uint32_t lastControlRun    = 0;
 uint32_t lastDisplayUpdate = 0;
 
@@ -235,32 +239,7 @@ void relayOff() {
   digitalWrite(PIN_DEC_RELAY, LOW);
   digitalWrite(PIN_INC_LED,   LOW);
   digitalWrite(PIN_DEC_LED,   LOW);
-  relayState    = RELAY_OFF;
-  relayOnTime_ms = 0;
-}
-
-
-// =============================================================================
-// ALARM HANDLING (latched — cleared by serial 'c' or by cycling power)
-// =============================================================================
-
-void setAlarm(const char* msg) {
-  relayOff();
-  currentMode  = MODE_ALARM;
-  alarmMessage = msg;
-  reseedRamp   = true;
-  Serial.print(F("ALARM: ")); Serial.println(msg);
-}
-
-// The box has no MANUAL of its own in the aircraft (the prop switch removes
-// power instead), so a cleared alarm returns to AUTO. Governing restarts
-// through the normal resume path: valid RPM first, ramp seeded at actual RPM.
-void clearAlarm() {
-  if (currentMode == MODE_ALARM) {
-    currentMode  = MODE_AUTO;
-    alarmMessage = "";
-    reseedRamp   = true;
-  }
+  relayState = RELAY_OFF;
 }
 
 
@@ -270,14 +249,12 @@ void clearAlarm() {
 void setRelay(RelayState direction, float duty) {
   if (direction == RELAY_OFF) { relayOff(); return; }
 
-  // Safety: cut relay if it's been on too long without RPM change
-  if (relayState == direction && relayOnTime_ms > 0) {
-    if ((millis() - relayOnTime_ms) > MAX_RELAY_MS) {
-      relayOff();
-      setAlarm("RELAY TIMEOUT");
-      return;
-    }
-  }
+  // There is deliberately no limit on how long one direction may be
+  // commanded. The original 350A holds its output until the selected RPM is
+  // reached, and at a pitch stop the aircraft's limit switch opens the relay
+  // coil circuit. A timeout here would stop governing every time the prop
+  // rested on a stop (low power on approach, for one). The 8 s timeout that
+  // stood here was removed 2026-11-15.
 
   duty = constrain(duty, 0.0f, 1.0f);
   uint32_t pos       = millis() % CONTROL_INTERVAL_MS;
@@ -296,7 +273,6 @@ void setRelay(RelayState direction, float duty) {
     digitalWrite(PIN_INC_LED,   LOW);
   }
 
-  if (relayState != direction) relayOnTime_ms = millis();
   relayState = direction;
 }
 
@@ -411,24 +387,24 @@ void updateRamp() {
 void runControlLoop() {
   if (currentMode != MODE_AUTO) { relayOff(); reseedRamp = true; return; }
 
-  // Standby conditions (not latched): take no action, resume when they clear.
+  // Standby conditions (none latched): take no action, resume when they clear.
   HoldReason why = HOLD_NONE;
   if (!rpmValid())  why = HOLD_NO_MAG;
+  else if (actualRPM < RPM_MIN_VALID) why = HOLD_RPM_LOW;
   else if (potOpen) why = HOLD_POT_OPEN;
   if (why != HOLD_NONE) {
     relayOff();
     holdReason = why;
-    reseedRamp = true;
+    // A low-RPM hold leaves the ramp alone, so that governing resumes at
+    // once against the knob setting: straight to INC (fine pitch) as an
+    // engine being restarted in flight comes up through RPM_MIN_VALID.
+    // The other standbys restart the ramp from the actual RPM.
+    if (why != HOLD_RPM_LOW) reseedRamp = true;
     return;
   }
   holdReason = HOLD_NONE;
 
-  // RPM sanity band (latched alarm)
-  if (actualRPM > 0 && (actualRPM < 400 || actualRPM > 3500)) {
-    setAlarm("RPM OUT OF RANGE"); return;
-  }
-
-  // First governing pass after power-up, standby, MANUAL or an alarm: start
+  // First governing pass after power-up, a standby or MANUAL: start
   // the ramp from the RPM the prop is turning right now. The setpoint then
   // walks to the knob position at RAMP_RATE_RPM_PER_SEC.
   if (reseedRamp) {
@@ -436,6 +412,19 @@ void runControlLoop() {
     rampedSetpoint = actualRPM;
     lastRampTime   = millis();
   }
+
+  // The ramp only limits how fast the governor approaches the knob setting.
+  // It must never make the governor push the RPM AWAY from the knob setting,
+  // which the original (it has no ramp) cannot do. So the tracked setpoint is
+  // kept between the actual RPM and the knob setting:
+  //  - RPM has moved past the ramp toward the knob setting (throttle advanced,
+  //    engine starting or restarting): the ramp carries on from the actual
+  //    RPM, and no relay is driven until the RPM stops short.
+  //  - RPM is beyond the knob setting, on the far side from the ramp: govern
+  //    straight against the knob setting.
+  rampedSetpoint = constrain(rampedSetpoint,
+                             min(actualRPM, targetSetpoint),
+                             max(actualRPM, targetSetpoint));
 
   // Proportional control against the ramped (smooth) setpoint
   float error = rampedSetpoint - actualRPM;
@@ -462,7 +451,7 @@ void runControlLoop() {
 // =============================================================================
 
 const char* modeName() {
-  return currentMode == MODE_AUTO ? "AUTO" : currentMode == MODE_ALARM ? "ALARM" : "MAN";
+  return currentMode == MODE_AUTO ? "AUTO" : "MAN";
 }
 
 void updateDisplay() {
@@ -470,82 +459,71 @@ void updateDisplay() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
 
-  if (currentMode == MODE_ALARM) {
-    display.setTextSize(2);
-    display.setCursor(0, 0);
-    display.println(F("!! ALARM !!"));
-    display.setTextSize(1);
-    display.setCursor(0, 22); display.println(alarmMessage);
-    display.setCursor(0, 36); display.println(F("CYCLE AUTO SWITCH"));
-    display.setCursor(0, 46); display.println(F("TO CLEAR"));
-    if ((millis() / 500) % 2 == 0)
-      display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, SSD1306_WHITE);
+  char buf[14];
 
+  // Row 1 (large): the setpoint being tracked + mode indicator
+  display.setTextSize(2);
+  display.setCursor(0, 0);
+  snprintf(buf, sizeof(buf), "%4d", (int)rampedSetpoint);
+  display.print(buf);
+  display.setTextSize(1);
+  display.setCursor(52, 7);
+  display.print(F("RPM"));
+  display.setCursor(SCREEN_WIDTH - 24, 4);
+  display.print(modeName());
+
+  // Row 2 (small): where the knob is pointing, with ramp direction
+  display.setCursor(0, 18);
+  display.print(F("KNOB:"));
+  if (potOpen) {
+    display.print(F(" OPEN"));
   } else {
-    char buf[14];
-
-    // Row 1 (large): the setpoint being tracked + mode indicator
-    display.setTextSize(2);
-    display.setCursor(0, 0);
-    snprintf(buf, sizeof(buf), "%4d", (int)rampedSetpoint);
+    snprintf(buf, sizeof(buf), "%5d RPM", (int)targetSetpoint);
     display.print(buf);
-    display.setTextSize(1);
-    display.setCursor(52, 7);
-    display.print(F("RPM"));
-    display.setCursor(SCREEN_WIDTH - 24, 4);
-    display.print(modeName());
-
-    // Row 2 (small): where the knob is pointing, with ramp direction
-    display.setCursor(0, 18);
-    display.print(F("KNOB:"));
-    if (potOpen) {
-      display.print(F(" OPEN"));
-    } else {
-      snprintf(buf, sizeof(buf), "%5d RPM", (int)targetSetpoint);
-      display.print(buf);
-      float diff = targetSetpoint - rampedSetpoint;
-      if (fabs(diff) > 5.0) {
-        display.print(diff > 0 ? F(" >") : F(" <"));
-      }
+    float diff = targetSetpoint - rampedSetpoint;
+    if (fabs(diff) > 5.0) {
+      display.print(diff > 0 ? F(" >") : F(" <"));
     }
+  }
 
-    display.drawLine(0, 28, SCREEN_WIDTH, 28, SSD1306_WHITE);
+  display.drawLine(0, 28, SCREEN_WIDTH, 28, SSD1306_WHITE);
 
-    // Row 3: ACT RPM
-    display.setCursor(0, 36);
-    display.print(F("ACT:"));
-    if (actualRPM < 10 || magSignalLost()) {
-      display.print(F("  ---- RPM"));
+  // Row 3: ACT RPM
+  display.setCursor(0, 36);
+  display.print(F("ACT:"));
+  if (actualRPM < 10 || magSignalLost()) {
+    display.print(F("  ---- RPM"));
+  } else {
+    snprintf(buf, sizeof(buf), "%5d RPM", (int)actualRPM);
+    display.print(buf);
+  }
+
+  // Row 4: status bar
+  display.setCursor(0, 56);
+  if (currentMode != MODE_AUTO) {
+    display.print(F("MANUAL"));
+  } else if (holdReason == HOLD_NO_MAG) {
+    display.print(F("NO MAG SIGNAL"));
+  } else if (holdReason == HOLD_RPM_LOW) {
+    display.print(F("RPM LOW"));
+  } else if (holdReason == HOLD_POT_OPEN) {
+    display.print(F("POT OPEN"));
+  } else {
+    float error = rampedSetpoint - actualRPM;
+    if (fabs(error) < DEADBAND_RPM) {
+      // HOLD: show a stability bar
+      display.print(F("HOLD"));
+      display.drawLine(28, 60, SCREEN_WIDTH - 2, 60, SSD1306_WHITE);
     } else {
-      snprintf(buf, sizeof(buf), "%5d RPM", (int)actualRPM);
-      display.print(buf);
-    }
-
-    // Row 4: status bar
-    display.setCursor(0, 56);
-    if (currentMode != MODE_AUTO) {
-      display.print(F("MANUAL"));
-    } else if (holdReason == HOLD_NO_MAG) {
-      display.print(F("NO MAG SIGNAL"));
-    } else if (holdReason == HOLD_POT_OPEN) {
-      display.print(F("POT OPEN"));
-    } else {
-      float error = rampedSetpoint - actualRPM;
-      if (fabs(error) < DEADBAND_RPM) {
-        // HOLD: show a stability bar
-        display.print(F("HOLD"));
-        display.drawLine(28, 60, SCREEN_WIDTH - 2, 60, SSD1306_WHITE);
-      } else {
-        // Activity bar: width proportional to duty
-        float duty = min(fabs(error) / PROP_ZONE_RPM, 1.0f);
-        uint8_t barW = (uint8_t)(duty * (SCREEN_WIDTH - 22));
-        display.fillRect(22, 56, barW, 8, SSD1306_WHITE);
-        // Label inverts over the filled bar
-        display.setTextColor(SSD1306_BLACK);
-        display.setCursor(2, 56);
-        display.print(error > 0 ? F("INC") : F("DEC"));
-        display.setTextColor(SSD1306_WHITE);
-      }
+      // Activity bar: width proportional to duty
+      float duty = min(fabs(error) / PROP_ZONE_RPM, 1.0f);
+      uint8_t barW = (uint8_t)(duty * (SCREEN_WIDTH - 22));
+      display.fillRect(22, 56, barW, 8, SSD1306_WHITE);
+      // Label inverts over the filled bar
+      display.setTextColor(SSD1306_BLACK);
+      display.setCursor(2, 56);
+      display.print(error > 0 ? F("INC") : F("DEC"));
+      display.setTextColor(SSD1306_WHITE);
     }
   }
 
@@ -569,7 +547,9 @@ void updateDisplay() {
 void printStatus() {
   Serial.print(F("Mode="));    Serial.print(modeName());
   Serial.print(F(" Hold="));
-  Serial.print(holdReason == HOLD_NO_MAG ? F("NO_MAG") : holdReason == HOLD_POT_OPEN ? F("POT_OPEN") : F("-"));
+  Serial.print(holdReason == HOLD_NO_MAG    ? F("NO_MAG")
+             : holdReason == HOLD_RPM_LOW   ? F("RPM_LOW")
+             : holdReason == HOLD_POT_OPEN  ? F("POT_OPEN") : F("-"));
   Serial.print(F(" PotADC=")); Serial.print(potFilt16 >> 4);
   Serial.print(F(" Target=")); Serial.print((int)targetSetpoint);
   Serial.print(F(" Ramped=")); Serial.print((int)rampedSetpoint);
@@ -587,9 +567,8 @@ void handleSerial() {
     case 's': printStatus(); break;
     case 'a': currentMode = MODE_AUTO; reseedRamp = true; Serial.println(F("-> AUTO")); break;
     case 'm': currentMode = MODE_MANUAL; relayOff(); Serial.println(F("-> MANUAL")); break;
-    case 'c': clearAlarm(); Serial.println(F("Alarm cleared")); break;
     case '?':
-      Serial.println(F("Commands: s=status a=auto m=manual(relays off) c=clear_alarm ?=help"));
+      Serial.println(F("Commands: s=status a=auto m=manual(relays off) ?=help"));
       break;
   }
 }

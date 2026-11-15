@@ -12,9 +12,10 @@ You want to find every firmware bug, wiring error, and marginal solder joint **b
 - **No magneto signal is a standby, not an alarm.** Like the original 350A, the governor takes no action without an RPM signal and resumes by itself when the signal returns. Relays are still de-energized within 2 seconds of the last pulse.
 - **The setpoint comes only from the panel pot** (10k linear, two wires, J1 pins E and F). Full clockwise = `POT_RPM_MAX`, full counter-clockwise = `POT_RPM_MIN`. The rotary switch, the presets and the EMERGENCY/LOW position are gone.
 - **An open pot circuit is a standby** (`POT OPEN`): relays off, resumes by itself when the pot reads valid again.
-- **Whenever governing starts or resumes, the setpoint starts at the RPM the prop is actually turning** and then walks to the knob position at 100 RPM/sec. Nothing lurches at switch-on.
+- **Whenever governing starts or resumes, the setpoint starts at the RPM the prop is actually turning** and then walks to the knob position at 100 RPM/sec. Nothing lurches at switch-on. **The ramp never makes the governor drive away from the knob setting:** if the RPM moves toward the knob setting faster than the ramp (throttle advanced, engine starting), `Ramped` simply rides the actual RPM and no relay is driven.
 - **The OLED is optional.** With nothing on the J2 service header the unit runs identically; use the serial console for the bench.
-- Two alarms are still **latched** (cleared by serial `c` or by cycling power): `RPM OUT OF RANGE` (below 400 or above 3500) and `RELAY TIMEOUT` (a relay commanded continuously for more than 8 seconds). On the bench the simulated RPM never responds to the relay, so **any RPM error you leave in place for more than 8 seconds ends in `RELAY TIMEOUT`**. That is expected here; clear it and carry on.
+- **Nothing latches.** An RPM reading below 400 is a third standby (`RPM LOW`): relays off while it lasts, and governing resumes by itself the moment the reading comes back up, straight against the knob setting with no ramp restart. **There is no upper RPM limit:** a high reading is governed like any other, by commanding a decrease. There is no alarm state and no serial `c` command any more (all of this changed 2026-11-15).
+- **There is no limit on how long a relay may be commanded.** Like the original 350A, the governor holds its output until the RPM reaches the knob setting; in the aircraft the pitch limit switches stop the motor at the stops. On the bench the simulated RPM never responds to the relay, so the relay stays on for as long as you leave an RPM error in place. (An 8-second `RELAY TIMEOUT` alarm existed until 2026-11-15 and was removed.)
 
 ---
 
@@ -158,8 +159,8 @@ Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF
 
 | Field | Meaning |
 |---|---|
-| `Mode` | `AUTO`, `MAN` (bench override, relays off) or `ALARM` (latched) |
-| `Hold` | Why AUTO is not driving: `NO_MAG`, `POT_OPEN`, or `-` when governing |
+| `Mode` | `AUTO` or `MAN` (bench override, relays off) |
+| `Hold` | Why AUTO is not driving: `NO_MAG`, `RPM_LOW`, `POT_OPEN`, or `-` when governing |
 | `PotADC` | Filtered pot reading: 0 at full CW, about 341 at mid-travel, about 512 at full CCW, about 1023 with the pot disconnected |
 | `Target` | RPM the knob is asking for |
 | `Ramped` | Setpoint the control loop is tracking right now (walks toward `Target`) |
@@ -213,10 +214,10 @@ Generator at 2300 RPM. Read `Target` for each knob position:
    - `Relay=INC` (RPM too low, commanding increase); red LED D1 lights
    - INC relay clicks on (indicator LED lights if using LEDs)
    - If motor connected: prop moves toward fine pitch
-3. Command the generator back to 2300 RPM **within 8 seconds** — the relay releases.
+3. Command the generator back to 2300 RPM — the relay releases.
 4. Command the generator to 2400 RPM (`3`, then `+` twice). Expected: `Relay=DEC`, green LED D2, DEC relay clicks on.
-5. Command back to 2300 within 8 seconds — relays off.
-6. Now repeat step 2 and leave it. After 8 seconds the governor must drop the relay and report `ALARM: RELAY TIMEOUT`. Send `c` to clear; it returns to AUTO and resumes.
+5. Command back to 2300 — relays off.
+6. Now repeat step 2 and leave it for a full minute. The relay must stay on the whole time and the status must stay `AUTO`: the governor holds its output until the RPM gets there, as the original does. Command back to 2300 — relay off.
 
 ### Test 5: Proportional Control Verification
 
@@ -238,9 +239,11 @@ If you have a scope, put it on J1 pin C (INC relay drive). You should see:
 1. Generator at 2300 RPM, knob set for `Target` 2300, relays off.
 2. Turn the knob quickly to full clockwise. `Target` jumps to 2650 at once; `Ramped` climbs from 2300 at 100 RPM/sec (about 3.5 seconds). With an OLED fitted a `>` shows next to the KNOB line while ramping.
 3. The INC relay comes on as `Ramped` passes 2325, pulsing at first and reaching full duty by about 2375. It does **not** slam on the instant the knob moves.
-4. As soon as `Ramped` reaches 2650, step the generator up to 2650 (command `5`) — relays off. (Leave the error in place longer than 8 seconds and you get `RELAY TIMEOUT`, as in Test 4.)
+4. As soon as `Ramped` reaches 2650, step the generator up to 2650 (command `5`) — relays off.
 5. Turn the knob quickly back until `Target` reads about 2300. `Ramped` walks *down* from 2650; DEC comes on progressively as it passes 2625. When `Ramped` arrives, command the generator to 2300 (command `3`) — relays off.
-6. **Ramp rate check (optional):** send `m` (relays off, so no timeout), turn the knob from full CCW to full CW, and watch `Ramped` by sending `s` repeatedly: 850 RPM should take 8 to 9 seconds. Send `a` when done.
+6. **Ramp rate check (optional):** send `m` (relays off), turn the knob from full CCW to full CW, and watch `Ramped` by sending `s` repeatedly: 850 RPM should take 8 to 9 seconds. Send `a` when done.
+7. **The ramp never drives away from the knob.** Generator at 1800 RPM, knob full clockwise (`Target` 2650). Unplug the generator for 3 seconds and plug it back in, so that `Ramped` restarts at 1800 and begins to climb. While `Ramped` is still below 2200, step the generator to 2300 (command `3`). Expected: the INC relay drops at once and **the DEC relay never comes on**; `Ramped` jumps to about 2300 and carries on climbing, and INC returns within a second.
+8. **RPM already past the knob.** Generator at 2300, knob full counter-clockwise (`Target` 1800), and wait for `Ramped` to start walking down. Step the generator to 1700. Expected: `Relay=INC` at once and `Ramped` reads 1800 — the governor works against the knob setting, not against the lagging ramp.
 
 ### Test 7: Safety — Pot Open Circuit
 
@@ -258,14 +261,15 @@ If you have a scope, put it on J1 pin C (INC relay drive). You should see:
 3. **Within 2 seconds** both relays de-energize. Status shows `Hold=NO_MAG`, `Mode=AUTO`. No alarm.
 4. Leave it 30 seconds: no relay activity.
 5. Reconnect the generator. Within about half a second governing resumes by itself, with `Ramped` restarting from the actual RPM.
-6. Repeat with the generator set to a different RPM before reconnecting, and confirm no `RPM OUT OF RANGE` alarm appears on reconnection.
+6. Repeat with the generator set to a different RPM before reconnecting, and confirm `Hold` never shows `RPM_LOW` on reconnection.
 
-### Test 9: Safety — RPM Out of Range (latched)
+### Test 9: Safety — Very High and Very Low RPM
 
-1. Governing normally. Command the generator to 3600 RPM (command `6`).
-2. Relays drop and the governor reports `ALARM: RPM OUT OF RANGE`. Set the generator back to 2300: the alarm must **stay latched**.
-3. Send `c` (or cycle the 12V supply). The governor returns to AUTO and resumes.
-4. Repeat with 300 RPM (command `0`).
+1. Governing normally with `Target` at 2300. Command the generator to 3600 RPM (command `6`).
+2. **`Relay=DEC` and it stays on.** There is no upper RPM limit: like the original, the governor answers any high reading by commanding a decrease, which is what an overspeed needs. `Hold=-`, `Mode=AUTO`.
+3. Command the generator back to 2300 — relays off.
+4. Command 300 RPM (command `0`). Relays drop. Status shows `Hold=RPM_LOW`, `Mode=AUTO`. Leave it 30 seconds: no relay activity. Below 400 RPM the engine is not running in any useful sense and the governor takes no action.
+5. Command 450 RPM. **At once**, with nothing sent on the console, `Hold=-` and `Relay=INC` (toward fine pitch, as for an engine being restarted in flight). `Ramped` must still read 2300 — this standby does not restart the ramp.
 
 ### Test 10: Running Without a Display
 
@@ -283,7 +287,7 @@ If you have external relays wired to the motor:
 
 1. Knob set for `Target` 2300; command the generator well below it (1800 RPM)
 2. Motor should run in the INC direction (fine pitch / more RPM)
-3. The governor stops the relay after 8 seconds (`RELAY TIMEOUT`). To time a full sweep, send `c` and let it run again, adding up the 8-second runs — with correct gears, full sweep should take **16–32 seconds**
+3. Time the full sweep from one pitch stop to the other — with correct gears it should take **16–32 seconds**. The governor keeps the relay on for as long as the RPM error is there, so **if your bench rig has no pitch limit switches, remove the error (step 6) before the motor reaches the stop**. In the aircraft the limit switch stops the motor
 4. **If sweep takes 6–12 seconds**: WRONG GEARS. Do not fly. See original 350A Service Note 3.
 5. Command the generator well above the setpoint (2650) — motor should reverse cleanly
 6. Verify motor stops when you remove the RPM error (bring simulated RPM to setpoint)
@@ -324,9 +328,6 @@ If you have an oscilloscope, these are the waveforms to expect at key test point
 - Measure across J1 pins E and F with the board unpowered: it should read the pot resistance (0–10kΩ)
 - Measure J1 pin E to ground with the board powered: 0–2.5V is valid, 5V means the pot circuit is open
 - Check R18 (10kΩ pull-up) and R19 (10kΩ series) are fitted
-
-**Governor goes to `ALARM: RELAY TIMEOUT` during testing:**
-- Expected whenever a bench RPM error is left in place for more than 8 seconds — the simulated RPM cannot respond. Send `c`.
 
 **Relays won't energize:**
 - Check J1 pins C and D for 12V output when RPM error is present (multimeter)

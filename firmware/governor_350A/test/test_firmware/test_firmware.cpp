@@ -13,7 +13,7 @@
  *   potAdcToRPM()      — pot divider reading to commanded RPM
  *   updatePot()        — filtering, hysteresis, open-circuit detect/recover
  *   updateRamp()       — setpoint ramping toward target
- *   runControlLoop()   — standby, alarms, relay direction/duty decisions
+ *   runControlLoop()   — standbys, relay direction/duty decisions
  *   setup() / loop()   — boot into AUTO, end-to-end standby and resume
  */
 
@@ -53,7 +53,6 @@ void setUp(void) {
     currentMode              = MODE_MANUAL;
     relayState               = RELAY_OFF;
     holdReason               = HOLD_NONE;
-    alarmMessage             = "";
 
     rampedSetpoint           = 2300.0f;
     targetSetpoint           = 2300.0f;
@@ -77,7 +76,6 @@ void setUp(void) {
     actualRPM                = 0.0f;
     lastMagPulse_ms          = 0;
 
-    relayOnTime_ms           = 0;
     lastControlRun           = 0;
     lastDisplayUpdate        = 0;
     displayOK                = false;
@@ -239,8 +237,8 @@ void test_check_mag_leaves_things_alone_while_signal_fresh(void) {
 }
 
 void test_check_mag_drops_relays_within_timeout_in_any_mode(void) {
-    ControlMode modes[3] = { MODE_AUTO, MODE_MANUAL, MODE_ALARM };
-    for (int m = 0; m < 3; m++) {
+    ControlMode modes[2] = { MODE_AUTO, MODE_MANUAL };
+    for (int m = 0; m < 2; m++) {
         currentMode     = modes[m];
         lastMagPulse_ms = 0;
         mock_millis     = MAG_TIMEOUT_MS + 1;
@@ -484,7 +482,6 @@ static void enterAutoMode(float setpoint, float actual) {
     rampedSetpoint   = setpoint;
     targetSetpoint   = setpoint;
     actualRPM        = actual;
-    relayOnTime_ms   = 0;
     relayState       = RELAY_OFF;
 }
 
@@ -576,54 +573,183 @@ void test_control_first_governing_pass_seeds_ramp_at_actual_rpm(void) {
     TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
 }
 
-void test_control_alarm_triggers_on_rpm_too_high(void) {
-    enterAutoMode(2300.0f, 4000.0f);  // > 3500 RPM hard limit
-    runControlLoop();
-    TEST_ASSERT_EQUAL(MODE_ALARM, currentMode);
-    TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+void test_control_no_upper_rpm_limit_keeps_commanding_decrease(void) {
+    // Like the original: however high the reading, the answer is DEC. A real
+    // overspeed is exactly when the governor must not go quiet.
+    float readings[3] = { 3501.0f, 4000.0f, 6000.0f };
+    for (int i = 0; i < 3; i++) {
+        enterAutoMode(2300.0f, readings[i]);
+        runControlLoop();
+        TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+        TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+        TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
+    }
 }
 
-void test_control_alarm_triggers_on_rpm_too_low(void) {
-    enterAutoMode(2300.0f, 200.0f);   // < 400 RPM hard limit (non-zero)
+void test_control_rpm_below_minimum_is_standby(void) {
+    enterAutoMode(2300.0f, 200.0f);   // < RPM_MIN_VALID (non-zero)
+    relayState = RELAY_INC;
+    mock_pin[PIN_INC_RELAY] = HIGH;
     runControlLoop();
-    TEST_ASSERT_EQUAL(MODE_ALARM, currentMode);
+    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+    TEST_ASSERT_EQUAL(HOLD_RPM_LOW, holdReason);
     TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_INC_RELAY]);
 }
 
-void test_control_alarm_stays_latched(void) {
-    enterAutoMode(2300.0f, 4000.0f);
+void test_control_rpm_minimum_itself_is_governed(void) {
+    enterAutoMode(2300.0f, (float)RPM_MIN_VALID - 1.0f);
     runControlLoop();
-    actualRPM = 2100.0f;              // RPM back in range, below setpoint
-    for (int i = 0; i < 50; i++) { mock_millis += 100; lastMagPulse_ms = mock_millis; runControlLoop(); }
-    TEST_ASSERT_EQUAL(MODE_ALARM, currentMode);
+    TEST_ASSERT_EQUAL(HOLD_RPM_LOW, holdReason);
     TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+    enterAutoMode(2300.0f, (float)RPM_MIN_VALID);
+    runControlLoop();
+    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+    TEST_ASSERT_EQUAL(RELAY_INC, relayState);
 }
 
-void test_control_relay_timeout_latches_alarm(void) {
-    // Continuous INC demand with the RPM never reaching the setpoint.
+void test_control_low_rpm_hold_resumes_by_itself_against_the_knob(void) {
+    // Engine failure in flight: the reading sits below the minimum for 5 s.
+    // No drive, nothing latched, and the ramp is not restarted.
+    enterAutoMode(2300.0f, 300.0f);
+    for (int i = 0; i < 50; i++) {
+        mock_millis += 100; lastMagPulse_ms = mock_millis;
+        runControlLoop();
+        TEST_ASSERT_EQUAL(HOLD_RPM_LOW, holdReason);
+        TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+    }
+    TEST_ASSERT_FALSE(reseedRamp);
+    // Restart: as the RPM comes up through the minimum the very next pass
+    // commands INC -- toward fine pitch -- with the ramp still at the knob.
+    actualRPM = 450.0f;
+    mock_millis += 100; lastMagPulse_ms = mock_millis;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+    TEST_ASSERT_EQUAL(RELAY_INC, relayState);
+    TEST_ASSERT_EQUAL_FLOAT(2300.0f, rampedSetpoint);
+}
+
+void test_control_relay_drive_has_no_time_limit(void) {
+    // Like the original 350A: the output is held until the selected RPM is
+    // reached, however long that takes. With the prop on a pitch stop the
+    // aircraft's limit switch stops the motor; the governor must not give up
+    // and must still be governing when the RPM finally crosses the setpoint.
     enterAutoMode(2300.0f, 2100.0f);
     mock_millis = 1000;
-    bool drove = false;
-    for (int i = 0; i < 100 && currentMode == MODE_AUTO; i++) {
+    for (int i = 0; i < 600; i++) {            // 60 seconds of INC demand
         lastMagPulse_ms = mock_millis;
         runControlLoop();
-        if (relayState == RELAY_INC) drove = true;
+        TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+        TEST_ASSERT_EQUAL(RELAY_INC, relayState);
         mock_millis += CONTROL_INTERVAL_MS;
     }
-    TEST_ASSERT_TRUE(drove);
-    TEST_ASSERT_EQUAL(MODE_ALARM, currentMode);
-    TEST_ASSERT_EQUAL_STRING("RELAY TIMEOUT", alarmMessage);
-    TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
-    TEST_ASSERT_TRUE(mock_millis - 1000 <= MAX_RELAY_MS + 2 * CONTROL_INTERVAL_MS);
+    actualRPM = 2500.0f;                       // e.g. power back on: now too fast
+    lastMagPulse_ms = mock_millis;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+    TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
 }
 
-void test_clear_alarm_returns_to_auto_through_resume_path(void) {
-    enterAutoMode(2300.0f, 4000.0f);
+void test_control_low_rpm_hold_keeps_a_pending_ramp_restart(void) {
+    // Engine start with the switch already in AUTO: the first valid readings
+    // are below the range. The restart of the ramp that the no-signal standby
+    // asked for must survive the low-RPM hold, so governing still begins from
+    // the actual RPM once the engine is running.
+    enterAutoMode(2300.0f, 300.0f);
+    reseedRamp = true;
     runControlLoop();
-    TEST_ASSERT_EQUAL(MODE_ALARM, currentMode);
-    clearAlarm();
-    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+    TEST_ASSERT_EQUAL(HOLD_RPM_LOW, holdReason);
     TEST_ASSERT_TRUE(reseedRamp);
+    actualRPM = 700.0f;
+    mock_millis += 100; lastMagPulse_ms = mock_millis;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+    TEST_ASSERT_FALSE(reseedRamp);
+    TEST_ASSERT_EQUAL_FLOAT(700.0f, rampedSetpoint);
+    TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+}
+
+// ---- The ramp never makes the governor drive away from the knob setting ----
+
+// One 100 ms control tick with the ramp running, as loop() does it.
+static void rampTick(float rpmStep) {
+    mock_millis += CONTROL_INTERVAL_MS;
+    lastMagPulse_ms = mock_millis;
+    actualRPM += rpmStep;
+    updateRamp();
+    runControlLoop();
+}
+
+void test_control_ramp_never_commands_decrease_while_rpm_rises_to_the_knob(void) {
+    // Engine start / restart with the knob at take-off RPM. The ramp starts at
+    // the actual RPM and climbs 100 RPM/s; the engine accelerates at 300 RPM/s.
+    // The governor must not drive toward coarse pitch to hold the RPM back.
+    enterAutoMode(2650.0f, 500.0f);
+    reseedRamp   = true;
+    lastRampTime = mock_millis;
+    for (int i = 0; i < 40; i++) {                 // 4 s, 500 -> 1700 RPM
+        rampTick(30.0f);
+        TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+        TEST_ASSERT_EQUAL_FLOAT(actualRPM, rampedSetpoint);   // ramp rides the RPM
+    }
+    // RPM stops short of the knob setting: the ramp walks on and INC follows.
+    bool inc = false;
+    for (int i = 0; i < 10; i++) {
+        rampTick(0.0f);
+        TEST_ASSERT_TRUE(relayState != RELAY_DEC);
+        if (relayState == RELAY_INC) inc = true;
+    }
+    TEST_ASSERT_TRUE(inc);
+}
+
+void test_control_ramp_never_commands_increase_while_rpm_falls_to_the_knob(void) {
+    enterAutoMode(1800.0f, 2650.0f);
+    reseedRamp   = true;
+    lastRampTime = mock_millis;
+    for (int i = 0; i < 20; i++) {                 // 2 s, 2650 -> 2050 RPM
+        rampTick(-30.0f);
+        TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+        TEST_ASSERT_EQUAL_FLOAT(actualRPM, rampedSetpoint);
+    }
+    bool dec = false;
+    for (int i = 0; i < 10; i++) {
+        rampTick(0.0f);
+        TEST_ASSERT_TRUE(relayState != RELAY_INC);
+        if (relayState == RELAY_DEC) dec = true;
+    }
+    TEST_ASSERT_TRUE(dec);
+}
+
+void test_control_rpm_beyond_the_knob_is_governed_against_the_knob(void) {
+    // Ramp still climbing toward 2300, RPM already above it: govern against
+    // the knob setting, not against the lagging ramp.
+    enterAutoMode(2300.0f, 2400.0f);
+    rampedSetpoint = 2000.0f;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
+    TEST_ASSERT_EQUAL_FLOAT(2300.0f, rampedSetpoint);
+    // Mirror image: ramp still coming down, RPM already below the knob.
+    enterAutoMode(2300.0f, 2200.0f);
+    rampedSetpoint = 2600.0f;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(RELAY_INC, relayState);
+    TEST_ASSERT_EQUAL_FLOAT(2300.0f, rampedSetpoint);
+}
+
+void test_control_ramp_between_rpm_and_knob_is_left_alone(void) {
+    // The ordinary case (a knob movement): the ramp lies between the RPM and
+    // the knob setting and must be tracked exactly as before.
+    enterAutoMode(2600.0f, 2300.0f);
+    rampedSetpoint = 2400.0f;
+    runControlLoop();
+    TEST_ASSERT_EQUAL_FLOAT(2400.0f, rampedSetpoint);
+    TEST_ASSERT_EQUAL(RELAY_INC, relayState);
+    enterAutoMode(2000.0f, 2300.0f);
+    rampedSetpoint = 2200.0f;
+    runControlLoop();
+    TEST_ASSERT_EQUAL_FLOAT(2200.0f, rampedSetpoint);
+    TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
 }
 
 void test_control_full_duty_outside_prop_zone(void) {
@@ -720,7 +846,7 @@ void test_loop_no_mag_signal_never_drives_and_never_alarms(void) {
     runLoopFor(10000, 0);                         // 10 s, engine not running
     TEST_ASSERT_FALSE(sawInc);
     TEST_ASSERT_FALSE(sawDec);
-    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);    // standby, not a latched alarm
+    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
     TEST_ASSERT_EQUAL(HOLD_NO_MAG, holdReason);
 }
 
@@ -759,7 +885,7 @@ void test_loop_mag_dropout_goes_to_standby_then_resumes(void) {
     TEST_ASSERT_EQUAL(HOLD_NO_MAG, holdReason);
 
     // Signal returns at a different RPM. The dropout itself must not be read
-    // as a low RPM (no alarm), and the ramp restarts from the new actual RPM.
+    // as a low RPM, and the ramp restarts from the new actual RPM.
     runLoopFor(400, US_PER_PULSE(2000));
     TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
     TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
@@ -778,7 +904,7 @@ void test_loop_ringing_on_every_pulse_does_not_corrupt_rpm(void) {
         mock_micros += 400;          mock_millis = mock_micros / 1000; magPulseISR(); loop();
         mock_micros += 500;          mock_millis = mock_micros / 1000; magPulseISR(); loop();
     }
-    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);            // no RPM OUT OF RANGE alarm
+    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);             // never read as a low RPM
     TEST_ASSERT_FLOAT_WITHIN(10.0f, 2225.0f, actualRPM);
 }
 
@@ -849,11 +975,16 @@ int main(void) {
     RUN_TEST(test_control_pot_open_holds_relays_off);
     RUN_TEST(test_control_pot_open_recovery_resumes_without_step);
     RUN_TEST(test_control_first_governing_pass_seeds_ramp_at_actual_rpm);
-    RUN_TEST(test_control_alarm_triggers_on_rpm_too_high);
-    RUN_TEST(test_control_alarm_triggers_on_rpm_too_low);
-    RUN_TEST(test_control_alarm_stays_latched);
-    RUN_TEST(test_control_relay_timeout_latches_alarm);
-    RUN_TEST(test_clear_alarm_returns_to_auto_through_resume_path);
+    RUN_TEST(test_control_no_upper_rpm_limit_keeps_commanding_decrease);
+    RUN_TEST(test_control_rpm_below_minimum_is_standby);
+    RUN_TEST(test_control_rpm_minimum_itself_is_governed);
+    RUN_TEST(test_control_low_rpm_hold_resumes_by_itself_against_the_knob);
+    RUN_TEST(test_control_relay_drive_has_no_time_limit);
+    RUN_TEST(test_control_low_rpm_hold_keeps_a_pending_ramp_restart);
+    RUN_TEST(test_control_ramp_never_commands_decrease_while_rpm_rises_to_the_knob);
+    RUN_TEST(test_control_ramp_never_commands_increase_while_rpm_falls_to_the_knob);
+    RUN_TEST(test_control_rpm_beyond_the_knob_is_governed_against_the_knob);
+    RUN_TEST(test_control_ramp_between_rpm_and_knob_is_left_alone);
     RUN_TEST(test_control_full_duty_outside_prop_zone);
     RUN_TEST(test_control_proportional_duty_in_prop_zone);
 
