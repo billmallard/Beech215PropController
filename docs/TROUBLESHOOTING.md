@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-## Status and Fault Messages (firmware v3.0)
+## Status and Fault Messages (firmware v3.1)
 
 In the aircraft there is no display. These messages appear on the USB serial console (9600 baud, type `s`)
 and on the optional bench display.
@@ -13,16 +13,17 @@ and on the optional bench display.
 
 The INC (red) and DEC (green) LEDs on the board follow the relay outputs.
 
-The console also reports the health of the two relay drivers. These are reports only; the governor
-carries on exactly as before.
+The governor reads its own relay outputs back, and the supply switch ahead of them.
 
-| Message | Meaning | Action |
-|---|---|---|
-| `DRIVER INC: STUCK_ON` / `DRIVER DEC: STUCK_ON` | That relay output is live although the governor is not commanding it | With nothing else feeding pin C or D, the output transistor (Q1 for INC, Q2 for DEC) or its driver (Q3, Q4) has failed short. **Do not fly the unit.** In the aircraft the relay stays energised until the prop switch is moved out of AUTO |
-| `DRIVER INC: NO_OUTPUT` / `DRIVER DEC: NO_OUTPUT` | The governor is commanding that relay and the output is dead | Driver transistor open or wrong way round, a missing resistor, or the output shorted to ground. Both channels at once: no 12 V reaching the drivers |
-| `DRIVER INC: OK` / `DRIVER DEC: OK` | A fault reported earlier has gone | — |
+| Message | Type | Meaning | Action |
+|---|---|---|---|
+| `DRIVER INC: STUCK_ON` / `DRIVER DEC: STUCK_ON`, followed by `DRIVER TRIP` | **Latched until power is cycled** | That relay output was live although the governor was not commanding it. The governor has opened its series switch: both relay drivers are off and the prop stays where it is. Status shows `Hold=DRV_TRIP`; the optional fault lamp is lit | In the aircraft: fly the prop manually. Cycling the prop switch out of AUTO and back restarts the governor, and it will trip again within half a second if the fault is still there. On the bench: with nothing else feeding pin C or D, the output transistor (Q1 for INC, Q2 for DEC) or its driver (Q3, Q4) has failed short. **Do not fly the unit** |
+| `DRIVER INC: NO_OUTPUT` / `DRIVER DEC: NO_OUTPUT` | Report only | The governor is commanding that relay and the output is dead. The governor carries on | Driver transistor open or wrong way round, a missing resistor, or the output shorted to ground |
+| `DRIVER SW: NO_OUTPUT` | Report only | The series switch is commanded closed and the driver supply is dead. Neither relay can be driven | Q5 or Q6 open or wrong way round, R22 to R25, or no 12 V reaching Q5 |
+| `DRIVER SW: STUCK_ON` | Report only | The series switch is live while commanded open (checked at every power-up, before it is closed). It can no longer cut off a failed driver | Q5 or Q6 failed short. The governor works, but without that protection. **Do not fly the unit** |
+| `DRIVER ...: OK` | — | A fault reported earlier has gone | — |
 
-Nothing latches: every condition above clears by itself, and there is nothing to reset. There is no
+`DRIVER TRIP` is the only condition that stays until power is cycled. Everything else clears by itself. There is no
 upper RPM limit: a high reading is answered with a decrease command, as on the original.
 
 There is no time limit on a relay command. As on the original, an output stays on until the RPM reaches
@@ -134,9 +135,9 @@ Poor magneto signal quality (weak impulse springs, worn rubber couplings, deteri
 
 ---
 
-## Firmware Defaults (v3.0)
+## Firmware Defaults (v3.1)
 
-Firmware v3.0 stores nothing in EEPROM. These are compile-time constants at the top of the sketch:
+Firmware v3.1 stores nothing in EEPROM. These are compile-time constants at the top of the sketch:
 
 | Parameter | Default |
 |---|---|

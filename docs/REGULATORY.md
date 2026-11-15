@@ -65,7 +65,7 @@ The "data used to show airworthiness" is the critical part. Your data package sh
 
 2. **This project's engineering documentation** — specifically the spec document showing:
    - Identical external interface
-   - Added safety features (watchdog, mag timeout)
+   - Added safety features (watchdog, mag timeout, relay output readback with a series cut-off switch)
    - Identical output behaviors (relay coil drive current, signal levels)
 
 3. **Pin-for-pin comparison table** — see [WIRING.md](WIRING.md), the "Pinout Cross-Reference" section. Print this for your 337 package.
@@ -106,7 +106,7 @@ The key points for your IA:
 1. The external interface is byte-for-byte identical — no airframe changes at all
 2. The original manufacturer is out of business and the part is genuinely unavailable new
 3. The original manufacturer documented the design at component level and explicitly expected owners to service it
-4. The added safety features (watchdog, mag timeout) make the replacement *safer* than the original, not less safe
+4. The added safety features (watchdog, mag timeout, relay output readback with a series cut-off switch) make the replacement *safer* than the original, not less safe
 5. The bench test procedure is comprehensive and documents that the unit performs its intended function before installation
 
 ---

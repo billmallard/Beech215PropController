@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers the complete build from bare PCB to installed system. Estimated time for an experienced solderer: 3–4 hours for the governor PCB. There is no panel unit to build on Rev 3.3. First-time builders should budget a full day and not rush.
+This guide covers the complete build from bare PCB to installed system. Estimated time for an experienced solderer: 3–4 hours for the governor PCB. There is no panel unit to build. First-time builders should budget a full day and not rush.
 
 **Skill level required:** Basic soldering. All components are through-hole — no SMD. If you've built a kit before, you can build this.
 
@@ -29,7 +29,7 @@ This guide covers the complete build from bare PCB to installed system. Estimate
 
 ## Parts Checklist
 
-Verify all parts against [BOM.md](../hardware_rev3_3/hardware/BOM.md) before starting. Lay them out and identify each one. The most common build error is swapping similar-looking components (e.g., installing a 330Ω where a 10kΩ belongs). Resistor color bands are your friend — confirm each one with your multimeter before soldering.
+Verify all parts against [BOM.md](../hardware_rev3_4/hardware/BOM.md) before starting. Lay them out and identify each one. The most common build error is swapping similar-looking components (e.g., installing a 330Ω where a 10kΩ belongs). Resistor color bands are your friend — confirm each one with your multimeter before soldering.
 
 ---
 
@@ -70,9 +70,14 @@ The Gerbers in `hardware/gerbers/350A_governor_JLCPCB.zip` are ready to upload t
 | R15, R17 | 10kΩ | Brn-Blk-Org-Gold | Relay readback dividers (bottom) |
 | R18, R19 | 10kΩ | Brn-Blk-Org-Gold | Panel control pull-up and series resistor |
 | R20, R21 | 4.7kΩ | Yel-Vio-Red-Gold | I2C pull-ups (optional display) |
+| R22, R24 | 1kΩ | Brn-Blk-Red-Gold | Series switch: Q5 base series, Q6 base |
+| R23, R25 | 10kΩ | Brn-Blk-Org-Gold | Series switch: Q5 base pull-up, drive-line pull-down |
+| R26 | 33kΩ | Org-Org-Org-Gold | Series switch readback divider (top) |
+| R27 | 10kΩ | Brn-Blk-Org-Gold | Series switch readback divider (bottom) |
+| R28–R31 | — | — | **Leave empty.** Optional fault lamp; see 2.8 |
 
 Color codes are for 4-band 5% parts; 1% metal-film parts carry five bands. Trust the meter, not the bands.
-On Rev 3.3 the resistor and diode designators are printed **inside** each part outline, so they are hidden once the part is fitted. Work from the silkscreen before you place each one.
+The resistor and diode designators are printed **inside** each part outline, so they are hidden once the part is fitted. Work from the silkscreen before you place each one.
 
 Resistors are non-polarized — orientation doesn't matter. Bend leads at 90°, insert, tape or bend leads slightly to hold in place, solder, trim leads flush.
 
@@ -109,18 +114,20 @@ LEDs are polarized. The **longer lead is the anode (+)**. The flat side of the L
 
 Install these so the lens is just above the PCB surface. Do not push them all the way flush — they will be visible indicators during testing.
 
-### 2.5 Transistors (Q1–Q4)
+### 2.5 Transistors (Q1–Q6)
 
-The relay driver circuit uses two NPN+PNP transistor pairs — all TO-92 package, about the same size as a small LED.
+The relay driver circuit uses two NPN+PNP transistor pairs, and a third pair (Q5, Q6) forms the series switch that feeds them both — all TO-92 package, about the same size as a small LED. **Q7 is left empty** (optional fault lamp).
 
 | Ref | Part | Type | Notes |
 |---|---|---|---|
 | Q1, Q2 | 2N2907A | PNP — high-side switch | TO-92L (wide body). Switches +12V to relay coil. |
 | Q3, Q4 | 2N2222A | NPN — level shifter | Standard TO-92. Driven by Nano D6/D7 (5V logic). |
+| Q5 | 2N2907A | PNP — series switch | Same part and footprint as Q1/Q2. Feeds +12V to Q1 and Q2; the firmware opens it if a relay output is live that it did not command. |
+| Q6 | 2N2222A | NPN — level shifter for Q5 | Same part and footprint as Q3/Q4. Driven by Nano D5. |
 
 **Pin orientation (critical):** Facing the flat side of the TO-92 body, pin order is **E – B – C** left to right for both types. The PCB silkscreen shows the flat body side — match it.
 
-**2N2907A package note:** Plastic TO-92 only. Do not use the TO-18 metal-can variant. On Rev 3.3 the Q1/Q2 pads are 2.54 mm apart: spread the two outer leads a little before inserting.
+**2N2907A package note:** Plastic TO-92 only. Do not use the TO-18 metal-can variant. The Q1/Q2/Q5 pads are 2.54 mm apart: spread the two outer leads a little before inserting.
 
 **2N2222A warning:** some parts sold as "2N2222A" in TO-92 (the ON Semi P2N2222A in particular) have the pinout reversed, C – B – E. Check the datasheet of the part you bought.
 
@@ -135,7 +142,7 @@ The relay driver circuit uses two NPN+PNP transistor pairs — all TO-92 package
 
 ⚠️ **Diode polarity:** every diode's band goes to the "K" mark. A reversed D3 or D4 conducts DC through the relay coil; a reversed D5 shorts the 12V rail and trips the fuse.
 
-> **Only build on a board marked "REV 3.3"** (bottom center). Rev 3, 3.1 and 3.2 boards have faults in the relay driver, the optocoupler enable pin and the fuse footprint, and no panel-control input. See [REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md).
+> **Only build on a board marked "REV 3.4"** (bottom center). Rev 3, 3.1 and 3.2 boards have faults in the relay driver, the optocoupler enable pin and the fuse footprint, and no panel-control input. See [REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md).
 
 ### 2.7 IC Sockets (install before ICs)
 
@@ -164,6 +171,10 @@ Install these before the Arduino socket — they need the iron to get in from th
 **J2 — Service Display Header (4-pin, optional):**
 - 1×4 2.54mm pin header: 5V, GND, SCL, SDA
 - Only needed if you want a display on the bench. Leave it off for the aircraft.
+
+**J3 — Fault Lamp Header (2-pin, optional, NOT fitted by default):**
+- Leave J3, Q7, R28, R29, R30 and R31 off the board. The governor is complete without them
+- They are only for an installation that adds a fault lamp outside the box. If you do fit them: R28, R29, R30 are 1kΩ (R28 has the wide 15.24 mm lead spacing), R31 is 10kΩ, Q7 is a 2N2222A, and an LED wires straight across J3 with its anode on the pin marked +. See [WIRING.md](WIRING.md)
 
 ### 2.9 Arduino Nano Socket
 
@@ -236,10 +247,10 @@ Open `firmware/governor_350A/governor_350A.ino`. At the top of the file, find th
 
 With the Nano connected by USB only (not in the board):
 - Open the Serial Monitor at 9600 baud
-- The banner should read `350A Digital Governor v3.0`
+- The banner should read `350A Digital Governor v3.1`
 - Type `s` for status and `?` for the command list
 
-Firmware v3.0 starts in AUTO and waits in standby (`NO MAG SIGNAL`) until it sees engine pulses. No display is needed.
+Firmware v3.1 starts in AUTO and waits in standby (`NO MAG SIGNAL`) until it sees engine pulses. No display is needed.
 
 ---
 
@@ -314,7 +325,7 @@ If you fitted J2 and plugged in an SSD1306 display before power-up, it should sh
 
 ## Section 6: Panel Control
 
-Rev 3.3 uses the panel control that is already in the aircraft. There is no panel unit to build.
+The board uses the panel control that is already in the aircraft. There is no panel unit to build.
 
 ### 6.1 Check the Existing Control
 
@@ -325,7 +336,7 @@ With the 7-pin connector unplugged from the governor (original manual, Service N
 3. Knob full counter-clockwise: about 10,000Ω
 4. The reading should change smoothly, with no jumps or open spots, from stop to stop
 
-A control that jumps or goes open will make the RPM setting jump. Firmware v3.0 treats a reading above about 16kΩ as an open wire and stops driving the relays until it recovers.
+A control that jumps or goes open will make the RPM setting jump. The firmware treats a reading above about 16kΩ as an open wire and stops driving the relays until it recovers.
 
 ### 6.2 If the Control Must Be Replaced
 
@@ -406,6 +417,7 @@ Follow the Ground Test section of the original 350A manual (reproduced in the fi
 | 3.0 | 2026-04-27 | V3 PCB: ULN2003A (U2) replaced by discrete NPN+PNP transistor pairs (Q1–Q4); added flyback diodes D3/D4 and PTC fuse F1; J3 removed; C3 changed to 10V rating; added R5–R8 |
 | 3.3 | 2026-11-14 | Panel control returned to the original 10kΩ pot on connector pins E/F (rotary switch, presets and panel unit removed; J2 is now an optional 4-pin display header). Relay driver base resistors and input pull-downs added, optocoupler enable pin corrected, fuse footprint corrected, 12V transient clamp and magneto input protection added, board re-routed with a solid ground plane. Needs firmware v3.0. Details: [REV3_3_CHANGES.md](../hardware_rev3_3/REV3_3_CHANGES.md) |
 | 3.2 | 2026-07-25 | Flyback diodes D3/D4 relocated from across the 2N2907A transistors to across the relay coil circuits (cathode to relay output, anode to ground) per flight-test engineering feedback — the previous placement provided no clamping of the negative turn-off spike. 12V rail rerouted around D3. "REV 3.2" silkscreen added for board identification. Existing Rev 3/3.1 boards: see [REWORK_FLYBACK_DIODES.md](REWORK_FLYBACK_DIODES.md) |
+| 3.4 | 2026-11-15 | Series switch (Q5, Q6, R22–R25) ahead of both relay drivers, with its own readback (R26, R27): the firmware opens it when a relay output is live that it did not command. Unpopulated pads for an optional fault lamp (J3, Q7, R28–R31). Needs firmware v3.1. Rev 3.3 was never built. |
 
 ---
 

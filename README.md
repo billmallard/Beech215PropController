@@ -6,7 +6,7 @@
 
 > **A modern, proportional-control replacement for the Airborne Electronics 350A solid-state propeller governor — for Beechcraft Bonanza models with the Beech 215-210 electric prop.**
 
-> **Status, 2026-11-14:** hardware Rev 3.3 and firmware v3.0 are design-complete and unit-tested. **No Rev 3.3 board has been built, bench-tested or flown.** Earlier board revisions have known faults and must not be built. See [hardware_rev3_3/REV3_3_CHANGES.md](hardware_rev3_3/REV3_3_CHANGES.md).
+> **Status, 2026-11-15:** hardware Rev 3.4 and firmware v3.1 are design-complete and unit-tested. **No Rev 3.4 board has been built, bench-tested or flown.** Earlier board revisions have known faults and must not be built. See [hardware_rev3_4/REV3_4_CHANGES.md](hardware_rev3_4/REV3_4_CHANGES.md).
 
 ---
 
@@ -32,6 +32,7 @@ The original Airborne Electronics 350A (covered under STC SA2700WE) uses a **ban
 | Fail-safe | RPM signal loss → no action | Same: no magneto signal for 2 seconds → both relays off; governing resumes when the signal returns |
 | Watchdog | None | Hardware watchdog resets MCU in 250ms if firmware stalls |
 | Motor travel limits | Limit switches | Same: the aircraft's limit switches. The governor holds its output until the RPM is reached, as the original does |
+| Failed output transistor | The relay stays energised and the prop runs to that pitch stop | The governor reads its own outputs back. An output that is live without being commanded opens a second switch ahead of both relay drivers within about 0.4 s, and the prop stops where it is. It stays off until the prop switch is cycled |
 
 ## Who This Is For
 
@@ -63,7 +64,7 @@ The system is one unit: the governor box. The panel knob and all aircraft wiring
 - LM2596S-5V DC-DC switching regulator
 - Optional 4-pin header for an SSD1306 display, for bench work only
 
-Current hardware revision: **3.3** (2026-11-14; boards are marked "REV 3.3" on the silkscreen). Rev 3.3 returns the panel control to the original potentiometer and fixes faults found in a design review of Rev 3.2. It needs firmware v3.0. **Rev 3, 3.1 and 3.2 boards must not be built or flown**; the reasons are in [hardware_rev3_3/REV3_3_CHANGES.md](hardware_rev3_3/REV3_3_CHANGES.md).
+Current hardware revision: **3.4** (2026-11-15; boards are marked "REV 3.4" on the silkscreen). Rev 3.3 returned the panel control to the original potentiometer and fixed faults found in a design review of Rev 3.2; Rev 3.4 adds a series switch ahead of the relay drivers and unpopulated pads for an optional fault lamp. It needs firmware v3.1. **Rev 3, 3.1 and 3.2 boards must not be built or flown**; the reasons are in [hardware_rev3_3/REV3_3_CHANGES.md](hardware_rev3_3/REV3_3_CHANGES.md). Rev 3.3 was never made.
 
 The PCB is a 100mm × 80mm 2-layer FR4 board, designed for JLCPCB fabrication at approximately **$2 for 5 boards**.
 
@@ -88,10 +89,11 @@ Beech215PropController/
 │       ├── governor_350A.ino        ← Arduino sketch (fully commented)
 │       ├── platformio.ini           ← PlatformIO build config (AVR + native test)
 │       └── test/                    ← Unity unit tests (runs on desktop, no hardware)
-├── hardware_rev3_3/                 ← CURRENT hardware revision (designed, not yet built)
-│   ├── REV3_3_CHANGES.md            ← What changed in 3.3 and why, verification evidence, open items
+├── hardware_rev3_3/                 ← Rev 3.3: superseded by 3.4 before it was built. Its change record still applies
+├── hardware_rev3_4/                 ← CURRENT hardware revision (designed, not yet built)
+│   ├── REV3_4_CHANGES.md            ← What changed in 3.4 and why, verification evidence, open items
 │   ├── board_top.png / board_bottom.png
-│   ├── build_scripts/               ← Scripts that generated the 3.3 schematic, board and outputs
+│   ├── build_scripts/               ← Scripts that generated the 3.4 schematic, board and outputs
 │   └── hardware/
 │       ├── 350A_governor.kicad_sch  ← Schematic (KiCad 10)
 │       ├── 350A_governor.kicad_pcb  ← PCB layout (KiCad 10)
@@ -108,8 +110,8 @@ Beech215PropController/
 
 ## Quick Start
 
-1. **Order the PCB** — Upload `hardware_rev3_3/hardware/gerbers/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
-2. **Order components** — See [hardware_rev3_3/hardware/BOM.md](hardware_rev3_3/hardware/BOM.md). Total ~$50–90 for a complete build.
+1. **Order the PCB** — Upload `hardware_rev3_4/hardware/gerbers/350A_governor_JLCPCB.zip` to [jlcpcb.com](https://jlcpcb.com). Default settings (2-layer, FR4, 1.6mm, HASL, green) are fine.
+2. **Order components** — See [hardware_rev3_4/hardware/BOM.md](hardware_rev3_4/hardware/BOM.md). Total ~$50–90 for a complete build.
 3. **Assemble** — Follow [docs/ASSEMBLY.md](docs/ASSEMBLY.md). All through-hole components; no SMD soldering.
 4. **Flash firmware** — See [firmware/governor_350A/README.md](firmware/governor_350A/README.md) for full instructions (Arduino IDE, PlatformIO, and CLI). Set `PULSES_PER_REV`, `POT_RPM_MAX` and `POT_RPM_MIN` for your engine before flashing.
 5. **Bench test** — Build the test harness described in [docs/BENCH_TEST.md](docs/BENCH_TEST.md) and verify operation before touching the aircraft.

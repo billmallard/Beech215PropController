@@ -1,6 +1,6 @@
 # Wiring Reference
 
-Applies to hardware Rev 3.3 and firmware v3.0. For Rev 3.2 and earlier (rotary
+Applies to hardware Rev 3.4 and firmware v3.1. For Rev 3.2 and earlier (rotary
 switch panel) see the copy of this file in git history.
 
 ## 7-Pin Governor Cannon Connector (J1)
@@ -55,23 +55,46 @@ before plugging it in. The board has 4.7kΩ pull-ups on SCL and SDA.
 
 ---
 
+## Fault Lamp Header (J3) — optional, not fitted by default
+
+J3 is a 2-pin header for a fault lamp outside the box. **Nothing is fitted
+by default**: J3, Q7 and R28–R31 are left off the board, and with them off
+the governor behaves identically. Fitting it means a wire out of the box and
+a lamp on the panel, which is an installation change of its own.
+
+| Pin | Signal |
+|---|---|
+| 1 (marked +) | LED anode: 12V through 1kΩ |
+| 2 | LED cathode: switched to ground through 1kΩ |
+
+Wire an ordinary LED straight across the two pins; it runs at about 5 mA and
+needs no other part. Either wire may short to ground or to the bus without
+harming the governor. The lamp lights steadily when the governor has shut
+its relay drivers off (see TROUBLESHOOTING, `DRIVER TRIP`), and for one
+second each time the governor is powered, as a lamp test.
+
+---
+
 ## Arduino Nano Pin Assignment
 
 | Nano Pin | Function | Direction | Notes |
 |---|---|---|---|
 | D2 | RPM_PULSE | Input | 6N137 optocoupler output; hardware interrupt INT0 |
+| D4 | FAULT_LAMP | Output | HIGH = optional fault lamp lit (J3; parts not fitted by default) |
+| D5 | DRV_EN | Output | HIGH = series switch closed, relay drivers powered. Held low by a 10kΩ pull-down while the Nano is in reset. Never set this pin or D4 to `INPUT_PULLUP` |
 | D6 | INC drive | Output | HIGH = INC relay on. NPN level shifter then PNP high-side switch |
 | D7 | DEC drive | Output | HIGH = DEC relay on |
 | D8 | INC_LED | Output | Red LED via 330Ω |
 | D9 | DEC_LED | Output | Green LED via 330Ω |
-| A3 | INC_SENSE | Analog in | INC relay output through a 33k/10k divider (output ÷ 4.3). Read back by the firmware to check the driver; report only |
+| A2 | SW_SENSE | Analog in | Switched driver supply through a 33k/10k divider (÷ 4.3). Checks the series switch |
+| A3 | INC_SENSE | Analog in | INC relay output through a 33k/10k divider (output ÷ 4.3). Read back by the firmware: live while not commanded opens the series switch |
 | A6 | DEC_SENSE | Analog in | DEC relay output through a 33k/10k divider. Read back the same way |
 | A7 | POT_SENSE | Analog in | Panel control. 10kΩ pull-up to 5V on pin E, 10kΩ series, 100nF |
 | A4 | SDA | I2C | Optional display |
 | A5 | SCL | I2C | Optional display |
 | +5V | VCC5 | Power | From the LM2596 5V output (the +5V pin, not VIN) |
 | GND | GND | Power | Two ground pins |
-| D3, D4, D5, D10, D11, D12, D13, A0, A1, A2 | — | — | Unused. D3–D5, D10, D11 carried the rotary switch on Rev 3.2 |
+| D3, D10, D11, D12, D13, A0, A1 | — | — | Unused |
 
 **Pot reading.** `adc = 1023 × Rpot / (Rpot + 10k)`. A 0–10kΩ control reads
 0–512. An open wire reads about 1023 and the firmware treats it as a fault. A
