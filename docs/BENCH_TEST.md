@@ -1,12 +1,12 @@
 # Bench Test Procedure
 
-**Applies to: hardware Rev 3.3 with firmware v3.0** (panel potentiometer input). Firmware v3.0 reads the pot on Nano pin A7 and does not support the rotary switch of Rev 3.2 and earlier boards.
+**Applies to: hardware Rev 3.4 with firmware v3.1** (panel potentiometer input, series switch). Firmware v3.1 does not run correctly on earlier boards.
 
 ## Why Bench Test?
 
 You want to find every firmware bug, wiring error, and marginal solder joint **before** the board is in the engine compartment at 8,500 feet. The bench test takes about 2 hours and will catch the majority of problems.
 
-## What Changed in v3.0 (read this if you bench-tested an earlier version)
+## What Changed in v3.0 and v3.1 (read this if you bench-tested an earlier version)
 
 - **The governor boots straight into AUTO.** In the aircraft the prop switch only powers the box in the AUTO position, so power-up means "govern". There is no serial command to start it. Serial `m` (relays off) and `a` remain as bench overrides.
 - **No magneto signal is a standby, not an alarm.** Like the original 350A, the governor takes no action without an RPM signal and resumes by itself when the signal returns. Relays are still de-energized within 2 seconds of the last pulse.
@@ -15,7 +15,8 @@ You want to find every firmware bug, wiring error, and marginal solder joint **b
 - **Whenever governing starts or resumes, the setpoint starts at the RPM the prop is actually turning** and then walks to the knob position at 100 RPM/sec. Nothing lurches at switch-on. **The ramp never makes the governor drive away from the knob setting:** if the RPM moves toward the knob setting faster than the ramp (throttle advanced, engine starting), `Ramped` simply rides the actual RPM and no relay is driven.
 - **The OLED is optional.** With nothing on the J2 service header the unit runs identically; use the serial console for the bench.
 - **Nothing latches.** An RPM reading below 400 is a third standby (`RPM LOW`): relays off while it lasts, and governing resumes by itself the moment the reading comes back up, straight against the knob setting with no ramp restart. **There is no upper RPM limit:** a high reading is governed like any other, by commanding a decrease. There is no alarm state and no serial `c` command any more (all of this changed 2026-11-15).
-- **The outputs are read back.** The firmware measures both relay outputs and reports on the console when one is not doing what it was told (`DRIVER INC: STUCK_ON`, `DRIVER DEC: NO_OUTPUT`, and so on). It is a report only: nothing the governor does changes. See Test 13.
+- **The outputs are read back, and a failed driver is cut off (v3.1, Rev 3.4).** The firmware measures both relay outputs. One that is dead while commanded on is reported (`DRIVER INC: NO_OUTPUT`). One that is **live while not commanded** means an output transistor has failed short: the firmware opens the series switch ahead of both drivers, prints `DRIVER TRIP`, and stays that way **until power is cycled**. This is the only latched state. See Test 13.
+- **Fault lamp (optional, not fitted by default).** If J3 and its parts are fitted, the lamp lights for one second at power-up and steadily after a trip.
 - **There is no limit on how long a relay may be commanded.** Like the original 350A, the governor holds its output until the RPM reaches the knob setting; in the aircraft the pitch limit switches stop the motor at the stops. On the bench the simulated RPM never responds to the relay, so the relay stays on for as long as you leave an RPM error in place. (An 8-second `RELAY TIMEOUT` alarm existed until 2026-11-15 and was removed.)
 
 ---
@@ -155,19 +156,20 @@ SCOPE (if available)
 Open a serial terminal on the governor Nano at 9600 baud. Type `s` for a status line (it also prints every 2 seconds in AUTO):
 
 ```
-Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF DrvInc=OK DrvDec=OK
+Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF DrvInc=OK DrvDec=OK DrvSw=OK
 ```
 
 | Field | Meaning |
 |---|---|
 | `Mode` | `AUTO` or `MAN` (bench override, relays off) |
-| `Hold` | Why AUTO is not driving: `NO_MAG`, `RPM_LOW`, `POT_OPEN`, or `-` when governing |
+| `Hold` | Why AUTO is not driving: `NO_MAG`, `RPM_LOW`, `POT_OPEN`, `DRV_TRIP`, or `-` when governing |
 | `PotADC` | Filtered pot reading: 0 at full CW, about 341 at mid-travel, about 512 at full CCW, about 1023 with the pot disconnected |
 | `Target` | RPM the knob is asking for |
 | `Ramped` | Setpoint the control loop is tracking right now (walks toward `Target`) |
 | `ACT` | Measured RPM |
 | `Relay` | `INC`, `DEC` or `OFF` |
-| `DrvInc`, `DrvDec` | Output readback for each relay driver: `OK`, `STUCK_ON` (output live while commanded off) or `NO_OUTPUT` (output dead while commanded on). Report only — see Test 13 |
+| `DrvInc`, `DrvDec` | Output readback for each relay driver: `OK`, `STUCK_ON` (output live while commanded off; trips the series switch) or `NO_OUTPUT` (output dead while commanded on; report only). See Test 13 |
+| `DrvSw` | Readback of the series switch that feeds both drivers: `OK`, `NO_OUTPUT` (closed but dead) or `STUCK_ON` (live while open) |
 
 ---
 
@@ -179,7 +181,7 @@ Expected knob readings below assume the defaults `POT_RPM_MAX 2650` and `POT_RPM
 
 1. Pulse generator disconnected or unpowered. Pot connected. Apply 12V.
 2. Serial console shows the boot banner ending in `AUTO. Type ? for commands.`
-3. Status line: `Mode=AUTO Hold=NO_MAG ... Relay=OFF`. With an OLED fitted the bottom line reads `NO MAG SIGNAL` and the mode indicator reads `AUTO`.
+3. Status line: `Mode=AUTO Hold=NO_MAG ... Relay=OFF DrvInc=OK DrvDec=OK DrvSw=OK`. If a fault lamp is fitted it lights for one second at power-up and goes out. With an OLED fitted the bottom line reads `NO MAG SIGNAL` and the mode indicator reads `AUTO`.
 4. Leave it for 30 seconds. **No relay clicks, no alarm.** The governor must sit in this standby indefinitely — this is the engine-not-running case.
 5. Current draw: 100–200mA at 12V (normal)
 
@@ -296,17 +298,21 @@ If you have external relays wired to the motor:
 
 ---
 
-### Test 13: Output Driver Readback
+### Test 13: Output Readback and the Series Switch
 
-The board divides each relay output down to a Nano analog pin (A3 for INC, A6 for DEC) so the firmware can check that an output is on when commanded on and off when commanded off. It only reports; the governor behaves exactly the same with or without a fault showing.
+The board divides each relay output, and the switched supply that feeds both drivers, down to a Nano analog pin (A3 for INC, A6 for DEC, A2 for the switch). The firmware checks that each is on when commanded on and off when commanded off.
 
-1. **Healthy board.** Through Tests 4 to 6 every status line must end `DrvInc=OK DrvDec=OK`, and no `DRIVER` line may appear on the console. This holds with relays, indicator LEDs or nothing at all connected to pins C and D.
-2. **Output live when it should be off.** Generator at the knob setting, `Relay=OFF`. Put a jumper from J1 pin A to J1 pin C (the same jumper the original manual uses for its airframe test). The INC relay or indicator comes on, fed by the jumper. Within half a second the console prints `DRIVER INC: STUCK_ON` and the status line shows `DrvInc=STUCK_ON`. Remove the jumper: `DRIVER INC: OK`.
-3. Repeat from pin A to pin D: `DRIVER DEC: STUCK_ON`, then `OK`.
-4. **Output dead when it should be on.** Clip a lead from Nano pin A3 to GND (this only grounds the sense input, through 33kΩ; it is harmless). Command the generator 100 RPM below the knob setting so `Relay=INC`. Within half a second: `DRIVER INC: NO_OUTPUT`. The INC relay still operates normally. Remove the lead while INC is still commanded: `DRIVER INC: OK`.
-5. A fault that appears with nothing unusual connected means a driver transistor (Q1 to Q4), its resistors, or the divider (R14 to R17) is wrong. `NO_OUTPUT` on both channels at once usually means the 12 V supply to the drivers is missing.
+1. **Healthy board.** Through Tests 4 to 6 every status line must end `DrvInc=OK DrvDec=OK DrvSw=OK`, and no `DRIVER` line may appear on the console. This holds with relays, indicator LEDs or nothing at all connected to pins C and D.
+2. **Series switch.** With the governor powered and idle, J1 pin A to the Q1 emitter pad should read under 0.5V (switch closed). Hold the Nano in reset (press and hold its reset button): the same reading rises to the full supply voltage, because the switch opens whenever the Nano is not running. Release the button.
+3. **Output live when it should be off: the trip.** Generator at the knob setting, `Relay=OFF`. Put a jumper from J1 pin A to J1 pin C (the same jumper the original manual uses for its airframe test). The INC relay or indicator comes on, fed by the jumper. Within half a second the console prints `DRIVER INC: STUCK_ON` and `DRIVER TRIP`, and the status line shows `Hold=DRV_TRIP DrvInc=STUCK_ON`. A fitted fault lamp lights.
+4. **The trip stays.** Remove the jumper. Command the generator 300 RPM above and then 300 RPM below the knob setting: **neither relay operates**, and `Hold=DRV_TRIP` remains. Wait a full minute; nothing changes.
+5. **Power cycle clears it.** Remove and re-apply 12V. The governor starts normally, `DrvInc=OK`, and governs again.
+6. Repeat steps 3 to 5 from pin A to pin D: `DRIVER DEC: STUCK_ON`, `DRIVER TRIP`.
+7. **Trip while the other relay is driven.** Command the generator 100 RPM below the knob setting so `Relay=INC`, then fit the jumper from pin A to pin D. The governor must trip and the INC relay must drop out with it.
+8. **Output dead when it should be on.** After a power cycle, clip a lead from Nano pin A3 to GND (this only grounds the sense input, through 33kΩ; it is harmless). Command the generator 100 RPM below the knob setting so `Relay=INC`. Within half a second: `DRIVER INC: NO_OUTPUT`. This is a report only: the INC relay still operates normally and there is no trip. Remove the lead while INC is still commanded: `DRIVER INC: OK`.
+9. A fault that appears with nothing unusual connected means a driver transistor (Q1 to Q6), its resistors, or a divider (R14 to R17, R26, R27) is wrong. `DrvSw=NO_OUTPUT` together with `NO_OUTPUT` on a commanded relay means the series switch is not closing.
 
-With motor relays connected, do not step the generator while a jumper is fitted in step 2 or 3: the governor would energise the other relay as well.
+With motor relays connected, the jumper in steps 3, 6 and 7 runs the motor for as long as it is fitted. Fit it briefly.
 
 ## Part 4: Scope Reference Waveforms
 

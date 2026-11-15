@@ -2,7 +2,8 @@
  * Beechcraft Bonanza Electric Prop — Digital Governor Controller
  * Replacement firmware for Airborne Electronics 350A (STC SA2700WE)
  *
- * Firmware v3.0 — for hardware Rev 3.3 and later
+ * Firmware v3.1 — for hardware Rev 3.4 and later (needs the series switch
+ * on D5 and its readback on A2; it will not run correctly on a Rev 3.3 board)
  *
  * Platform:  Arduino Nano (ATmega328P, 5V, 16MHz)
  * Libraries: Adafruit SSD1306, Adafruit GFX (the display itself is optional)
@@ -95,18 +96,28 @@
 
 // ── OUTPUT DRIVER READBACK ────────────────────────────────────────────────────
 // Each relay output is divided by 4.3 into an ADC pin, so the firmware can see
-// whether an output is really doing what it was told: on when commanded on
-// (driver transistors alive), off when commanded off (not failed short).
+// whether an output is really doing what it was told. Two different faults:
 //
-// This is MONITORING ONLY. A disagreement is reported on the serial console
-// and the bench display, and changes nothing the governor does. The firmware
-// cannot switch off an output whose transistor has failed short -- that takes
-// a second switch in series, which Rev 3.3 does not have. The one thing it
-// could do, refuse to drive the other relay, is not clearly better than
-// carrying on, so it does not.
+//   NO_OUTPUT  dead while commanded on (driver open, output shorted to ground).
+//              REPORT ONLY. The governor carries on exactly as before.
+//
+//   STUCK_ON   live while commanded off: an output transistor has failed
+//              short and is holding a prop relay energised. This TRIPS the
+//              series switch (Q5), which removes the supply from both relay
+//              drivers and stops the prop where it is.
+//
+// A trip stays until power is cycled (prop switch out of AUTO and back). It
+// is the ONE latched state in this firmware, by Bill's ruling of 2026-11-15:
+// a shorted transistor does not heal, and closing the switch again would
+// only re-energise the relay. Nothing else may latch.
+//
+// The series switch has its own readback. At power-up it is checked while
+// still open; a switch that is already live cannot protect anything and is
+// reported (STUCK_ON). Both switch faults are report only.
 #define SENSE_ON_ADC     205     // Output counts as ON above this: about 1.0 V at the pin, 4.3 V at the output
 #define SENSE_SETTLE_MS  10      // A reading this soon after the output changed is not judged
-#define DRV_FAULT_MS     200     // A disagreement must last this long before it is reported
+#define DRV_FAULT_MS     200     // A disagreement must last this long before it is reported or trips
+#define LAMP_TEST_MS     1000    // The optional fault lamp is lit this long at power-up, as a lamp test
 
 // ── HARDWARE PINS ─────────────────────────────────────────────────────────────
 #define PIN_RPM_INPUT   2   // 6N137 output -> INT0 (hardware interrupt)
@@ -119,8 +130,10 @@
 #define PIN_INC_SENSE   A3  // INC_RELAY output / 4.3
 #define PIN_DEC_SENSE   A6  // DEC_RELAY output / 4.3 (analog-only pin)
 // A4 = SDA, A5 = SCL — optional OLED on the 4-pin service header (Wire library)
-// D3, D4, D5, D10, D11 were the rotary switch on Rev 3.2 and earlier. They are
-// unconnected on Rev 3.3 and are left as inputs with pull-ups.
+#define PIN_DRV_EN      5   // Series switch (Q6 -> Q5): HIGH = relay drivers powered
+#define PIN_SW_SENSE    A2  // 12V_SW (after the series switch) / 4.3
+#define PIN_FAULT_LAMP  4   // Optional fault lamp (J3, not fitted by default): HIGH = lit
+// D3, D10, D11 are unconnected and are left as inputs with pull-ups.
 
 // ── DISPLAY (OPTIONAL) ────────────────────────────────────────────────────────
 // The governor runs identically with no display attached. The display is
@@ -135,9 +148,9 @@ enum RelayState  { RELAY_OFF, RELAY_INC, RELAY_DEC };
 
 // Why the governor is in AUTO but not driving. Nothing here latches: the
 // relays are held off and governing resumes by itself when the cause clears.
-// The firmware has no latched alarm of any kind, because the aircraft has
-// no way to reset one except the prop switch, and the original has none.
-enum HoldReason  { HOLD_NONE, HOLD_NO_MAG, HOLD_RPM_LOW, HOLD_POT_OPEN };
+// The one exception is HOLD_DRV_TRIP (a relay output transistor failed short;
+// see OUTPUT DRIVER READBACK), which stays until power is cycled.
+enum HoldReason  { HOLD_NONE, HOLD_NO_MAG, HOLD_RPM_LOW, HOLD_POT_OPEN, HOLD_DRV_TRIP };
 
 ControlMode currentMode  = MODE_MANUAL;   // setup() ends in MODE_AUTO
 RelayState  relayState   = RELAY_OFF;
@@ -179,10 +192,15 @@ struct DriverMon {
   uint32_t    change_ms;         // When cmd last changed
   bool        mismatch;          // A disagreement is being timed
   uint32_t    mismatchSince_ms;
-  DriverFault fault;             // Reported state. Never acted on.
+  DriverFault fault;             // STUCK_ON on a relay output trips; everything else is report only
 };
 DriverMon incDrv = { PIN_INC_SENSE, false, 0, false, 0, DRV_OK };
 DriverMon decDrv = { PIN_DEC_SENSE, false, 0, false, 0, DRV_OK };
+DriverMon swDrv  = { PIN_SW_SENSE,  false, 0, false, 0, DRV_OK };   // the series switch
+// Set when a relay output is found live while commanded off. Cleared only by
+// a reset, i.e. by cycling power. The series switch stays open meanwhile.
+bool     driverTripped = false;
+uint32_t bootTime_ms   = 0;
 
 // ── RELAY TIMING ──────────────────────────────────────────────────────────────
 uint32_t lastControlRun    = 0;
@@ -306,21 +324,31 @@ void setRelay(RelayState direction, float duty) {
 
 
 // =============================================================================
-// OUTPUT DRIVER READBACK (monitoring only)
+// OUTPUT DRIVER READBACK AND SERIES SWITCH
 // =============================================================================
 
 const char* driverFaultName(DriverFault f) {
   return f == DRV_STUCK_ON ? "STUCK_ON" : f == DRV_NO_OUTPUT ? "NO_OUTPUT" : "OK";
 }
 
-// Compare one output with what it was told. A fault is reported only after
+bool senseHigh(uint8_t pin) {
+  analogRead(pin);                              // settle the ADC input, discard
+  return analogRead(pin) > SENSE_ON_ADC;
+}
+
+// The series switch. Records what it was told, and when, like writeOutputs().
+void setSwitch(bool on) {
+  if (on != swDrv.cmd) { swDrv.cmd = on; swDrv.change_ms = millis(); }
+  digitalWrite(PIN_DRV_EN, on ? HIGH : LOW);
+}
+
+// Compare one output with what it was told. A fault is declared only after
 // the disagreement has lasted DRV_FAULT_MS, and is withdrawn only on positive
 // evidence: STUCK_ON when the output is seen off while commanded off,
 // NO_OUTPUT when it is seen on while commanded on.
 void checkDriver(DriverMon &d, uint32_t now) {
   if ((now - d.change_ms) < SENSE_SETTLE_MS) return;
-  analogRead(d.sensePin);                       // settle the ADC input, discard
-  bool high = analogRead(d.sensePin) > SENSE_ON_ADC;
+  bool high = senseHigh(d.sensePin);
 
   if (high == d.cmd) {
     d.mismatch = false;
@@ -335,19 +363,50 @@ void checkDriver(DriverMon &d, uint32_t now) {
   }
 }
 
+void reportDriver(const char* name, DriverFault was, DriverFault is) {
+  if (is == was) return;
+  Serial.print(F("DRIVER ")); Serial.print(name);
+  Serial.print(F(": "));      Serial.println(driverFaultName(is));
+}
+
+// A relay output is live that the governor did not command: open the series
+// switch, which takes the supply away from both relay drivers, and stay
+// that way until power is cycled.
+void tripDrivers() {
+  driverTripped = true;
+  setSwitch(false);
+  relayOff();
+  digitalWrite(PIN_FAULT_LAMP, HIGH);
+  Serial.println(F("DRIVER TRIP: relay drivers off until power is cycled"));
+}
+
 // Called once per control tick, before the control decision, so each reading
 // is taken a full tick after the outputs were last written.
 void checkDrivers() {
   uint32_t now = millis();
-  DriverFault wasInc = incDrv.fault, wasDec = decDrv.fault;
-  checkDriver(incDrv, now);
-  checkDriver(decDrv, now);
-  if (incDrv.fault != wasInc) {
-    Serial.print(F("DRIVER INC: ")); Serial.println(driverFaultName(incDrv.fault));
+  DriverFault wasInc = incDrv.fault, wasDec = decDrv.fault, wasSw = swDrv.fault;
+
+  // The relay outputs can only be judged while the series switch is closed
+  // and settled. With it open they have no supply: a low reading proves
+  // nothing, and a high one is being fed from outside the box.
+  if (swDrv.cmd && (now - swDrv.change_ms) >= SENSE_SETTLE_MS) {
+    checkDriver(incDrv, now);
+    checkDriver(decDrv, now);
   }
-  if (decDrv.fault != wasDec) {
-    Serial.print(F("DRIVER DEC: ")); Serial.println(driverFaultName(decDrv.fault));
+  checkDriver(swDrv, now);
+
+  reportDriver("INC", wasInc, incDrv.fault);
+  reportDriver("DEC", wasDec, decDrv.fault);
+  reportDriver("SW",  wasSw,  swDrv.fault);
+
+  if (!driverTripped &&
+      (incDrv.fault == DRV_STUCK_ON || decDrv.fault == DRV_STUCK_ON)) {
+    tripDrivers();
   }
+
+  // Optional fault lamp: steady after a trip, and a short lamp test at power-up.
+  digitalWrite(PIN_FAULT_LAMP,
+               (driverTripped || (now - bootTime_ms) < LAMP_TEST_MS) ? HIGH : LOW);
 }
 
 
@@ -460,6 +519,15 @@ void updateRamp() {
 // Runs every 100ms. Tracks rampedSetpoint so knob movements are smooth.
 void runControlLoop() {
   if (currentMode != MODE_AUTO) { relayOff(); reseedRamp = true; return; }
+
+  // A relay output transistor has failed short and the series switch is
+  // open. Nothing can be driven until power is cycled.
+  if (driverTripped) {
+    relayOff();
+    holdReason = HOLD_DRV_TRIP;
+    reseedRamp = true;
+    return;
+  }
 
   // Standby conditions (none latched): take no action, resume when they clear.
   HoldReason why = HOLD_NONE;
@@ -574,10 +642,15 @@ void updateDisplay() {
 
   // Row 4: status bar
   display.setCursor(0, 56);
-  if (incDrv.fault != DRV_OK || decDrv.fault != DRV_OK) {
-    bool isInc = (incDrv.fault != DRV_OK);
-    display.print(isInc ? F("INC ") : F("DEC "));
-    display.print(driverFaultName(isInc ? incDrv.fault : decDrv.fault));
+  if (incDrv.fault != DRV_OK || decDrv.fault != DRV_OK || swDrv.fault != DRV_OK) {
+    if (driverTripped) display.print(F("TRIP "));
+    if (incDrv.fault != DRV_OK) {
+      display.print(F("INC ")); display.print(driverFaultName(incDrv.fault));
+    } else if (decDrv.fault != DRV_OK) {
+      display.print(F("DEC ")); display.print(driverFaultName(decDrv.fault));
+    } else {
+      display.print(F("SW "));  display.print(driverFaultName(swDrv.fault));
+    }
   } else if (currentMode != MODE_AUTO) {
     display.print(F("MANUAL"));
   } else if (holdReason == HOLD_NO_MAG) {
@@ -627,7 +700,8 @@ void printStatus() {
   Serial.print(F(" Hold="));
   Serial.print(holdReason == HOLD_NO_MAG    ? F("NO_MAG")
              : holdReason == HOLD_RPM_LOW   ? F("RPM_LOW")
-             : holdReason == HOLD_POT_OPEN  ? F("POT_OPEN") : F("-"));
+             : holdReason == HOLD_POT_OPEN  ? F("POT_OPEN")
+             : holdReason == HOLD_DRV_TRIP  ? F("DRV_TRIP") : F("-"));
   Serial.print(F(" PotADC=")); Serial.print(potFilt16 >> 4);
   Serial.print(F(" Target=")); Serial.print((int)targetSetpoint);
   Serial.print(F(" Ramped=")); Serial.print((int)rampedSetpoint);
@@ -636,7 +710,8 @@ void printStatus() {
   Serial.print(F(" Relay="));
   Serial.print(relayState == RELAY_INC ? F("INC") : relayState == RELAY_DEC ? F("DEC") : F("OFF"));
   Serial.print(F(" DrvInc=")); Serial.print(driverFaultName(incDrv.fault));
-  Serial.print(F(" DrvDec=")); Serial.println(driverFaultName(decDrv.fault));
+  Serial.print(F(" DrvDec=")); Serial.print(driverFaultName(decDrv.fault));
+  Serial.print(F(" DrvSw="));  Serial.println(driverFaultName(swDrv.fault));
 }
 
 // Bench/service console. Nothing here is needed in the aircraft.
@@ -661,7 +736,7 @@ void handleSerial() {
 void setup() {
   Serial.begin(9600);
   Serial.println();
-  Serial.println(F("350A Digital Governor v3.0"));
+  Serial.println(F("350A Digital Governor v3.1"));
   Serial.print(F("PULSES_PER_REV=")); Serial.println(PULSES_PER_REV);
   Serial.print(F("Knob range=")); Serial.print(POT_RPM_MIN);
   Serial.print(F("-")); Serial.print(POT_RPM_MAX); Serial.println(F(" RPM"));
@@ -672,13 +747,15 @@ void setup() {
   pinMode(PIN_DEC_RELAY, OUTPUT); digitalWrite(PIN_DEC_RELAY, LOW);
   pinMode(PIN_INC_LED,   OUTPUT); digitalWrite(PIN_INC_LED,   LOW);
   pinMode(PIN_DEC_LED,   OUTPUT); digitalWrite(PIN_DEC_LED,   LOW);
+  // Series switch open and fault lamp off until the checks below
+  pinMode(PIN_DRV_EN,     OUTPUT); digitalWrite(PIN_DRV_EN,     LOW);
+  pinMode(PIN_FAULT_LAMP, OUTPUT); digitalWrite(PIN_FAULT_LAMP, LOW);
 
   // RPM input with internal pull-up (board also has a 4.7k pull-up)
   pinMode(PIN_RPM_INPUT, INPUT_PULLUP);
 
-  // Former rotary-switch pins: unconnected on Rev 3.3 — don't leave them floating
-  pinMode(3, INPUT_PULLUP);  pinMode(4, INPUT_PULLUP);  pinMode(5, INPUT_PULLUP);
-  pinMode(10, INPUT_PULLUP); pinMode(11, INPUT_PULLUP);
+  // Unconnected pins — don't leave them floating
+  pinMode(3, INPUT_PULLUP);  pinMode(10, INPUT_PULLUP); pinMode(11, INPUT_PULLUP);
 
   // Magneto pulse interrupt — falling edge on INT0 (pin 2)
   EIFR = (1 << INTF0);
@@ -704,7 +781,7 @@ void setup() {
     display.clearDisplay();
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);  display.println(F("350A Governor v3.0"));
+    display.setCursor(0, 0);  display.println(F("350A Governor v3.1"));
     display.setCursor(0, 12); display.println(F("Panel pot control"));
     display.setCursor(0, 30); display.println(F("Initializing..."));
     display.display();
@@ -724,6 +801,23 @@ void setup() {
   lastControlRun = millis();
   lastPotRead    = millis();
   relayOff();
+
+  // Series switch. A reset is the only thing that clears a trip. Before the
+  // switch is closed, check that it is really open: if 12V_SW is already live,
+  // Q5 has failed short and can no longer protect anything. That is reported
+  // and the governor runs on, as it would have without the switch.
+  driverTripped = false;
+  incDrv.fault = decDrv.fault = swDrv.fault = DRV_OK;
+  incDrv.mismatch = decDrv.mismatch = swDrv.mismatch = false;
+  setSwitch(false);
+  delay(SENSE_SETTLE_MS);
+  if (senseHigh(PIN_SW_SENSE)) {
+    swDrv.fault = DRV_STUCK_ON;
+    Serial.println(F("DRIVER SW: STUCK_ON (series switch cannot open)"));
+  }
+  setSwitch(true);
+  bootTime_ms = millis();
+  digitalWrite(PIN_FAULT_LAMP, HIGH);   // lamp test; checkDrivers() ends it
 
   // The aircraft prop switch only powers this box in AUTO, so power-up means
   // "govern". Nothing is driven until a valid magneto signal is present, and

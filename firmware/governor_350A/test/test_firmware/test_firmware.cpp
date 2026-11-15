@@ -42,10 +42,18 @@ static uint16_t adcForOhms(float ohms) {
 #define SENSE_ADC_ON   573
 #define SENSE_ADC_OFF  0
 static bool senseFollowsOutputs = false;
-// A healthy board: each sense input follows its output pin.
+static bool incShorted = false;   // INC output transistor failed short
+static bool decShorted = false;   // DEC output transistor failed short
+// The board as the ADC sees it. The series switch feeds both relay drivers,
+// so an output is live only with the switch closed and its transistor either
+// commanded on or failed short.
 static void mirrorSense(void) {
-    mock_adc[PIN_INC_SENSE - A0] = mock_pin[PIN_INC_RELAY] == HIGH ? SENSE_ADC_ON : SENSE_ADC_OFF;
-    mock_adc[PIN_DEC_SENSE - A0] = mock_pin[PIN_DEC_RELAY] == HIGH ? SENSE_ADC_ON : SENSE_ADC_OFF;
+    bool sw  = mock_pin[PIN_DRV_EN] == HIGH;
+    bool inc = sw && (mock_pin[PIN_INC_RELAY] == HIGH || incShorted);
+    bool dec = sw && (mock_pin[PIN_DEC_RELAY] == HIGH || decShorted);
+    mock_adc[PIN_SW_SENSE  - A0] = sw  ? SENSE_ADC_ON : SENSE_ADC_OFF;
+    mock_adc[PIN_INC_SENSE - A0] = inc ? SENSE_ADC_ON : SENSE_ADC_OFF;
+    mock_adc[PIN_DEC_SENSE - A0] = dec ? SENSE_ADC_ON : SENSE_ADC_OFF;
 }
 
 // =============================================================================
@@ -93,7 +101,11 @@ void setUp(void) {
 
     incDrv = { PIN_INC_SENSE, false, 0, false, 0, DRV_OK };
     decDrv = { PIN_DEC_SENSE, false, 0, false, 0, DRV_OK };
+    swDrv  = { PIN_SW_SENSE,  false, 0, false, 0, DRV_OK };
+    driverTripped            = false;
+    bootTime_ms              = 0;
     senseFollowsOutputs      = false;
+    incShorted = decShorted  = false;
 }
 
 void tearDown(void) {}
@@ -685,50 +697,155 @@ void test_control_low_rpm_hold_keeps_a_pending_ramp_restart(void) {
     TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
 }
 
-// ---- Output driver readback (monitoring only) ----
+// ---- Output driver readback and the series switch ----
 
-// One control tick's worth of readback, 100 ms after the last one.
+// Series switch closed and settled, as after setup().
+static void closeSwitch(void) {
+    mock_millis = 1000;
+    setSwitch(true);
+    mirrorSense();
+    mock_millis += 50;
+}
+
+// One control tick's worth of readback on a board that behaves as modelled.
 static void senseTick(void) {
+    mock_millis += CONTROL_INTERVAL_MS;
+    mirrorSense();
+    checkDrivers();
+}
+
+// The same, with the sense inputs left exactly as the test set them.
+static void rawTick(void) {
     mock_millis += CONTROL_INTERVAL_MS;
     checkDrivers();
 }
 
 void test_driver_readback_ok_when_outputs_follow_commands(void) {
-    mock_millis = 1000;
-    writeOutputs(true, false);  mirrorSense();
+    closeSwitch();
+    writeOutputs(true, false);
     for (int i = 0; i < 5; i++) senseTick();
-    writeOutputs(false, true);  mirrorSense();
+    writeOutputs(false, true);
     for (int i = 0; i < 5; i++) senseTick();
-    writeOutputs(false, false); mirrorSense();
+    writeOutputs(false, false);
     for (int i = 0; i < 5; i++) senseTick();
     TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
     TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, swDrv.fault);
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
 }
 
-void test_driver_stuck_on_is_reported_after_it_persists(void) {
-    mock_millis = 1000;
-    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;      // live with the command off
-    checkDrivers();                                   // t = 0: disagreement first seen
-    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+void test_driver_stuck_on_trips_the_series_switch(void) {
+    closeSwitch();
+    incShorted = true;                                // live with the command off
+    mirrorSense(); checkDrivers();                    // t = 0: first seen
+    TEST_ASSERT_FALSE(driverTripped);
     senseTick();                                      // 100 ms
-    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
     senseTick();                                      // 200 ms
+    TEST_ASSERT_TRUE(driverTripped);
     TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
-    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);          // the other channel is untouched
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_DRV_EN]);    // supply to both drivers removed
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_INC_RELAY]);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_DEC_RELAY]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_FAULT_LAMP]);
 }
 
-void test_driver_no_output_is_reported_after_it_persists(void) {
-    mock_millis = 1000;
-    writeOutputs(false, true);                        // DEC commanded, sense stays at 0
-    senseTick();
+void test_driver_stuck_on_trips_while_the_other_relay_is_driven(void) {
+    // The dangerous case: INC is being driven and DEC fails short.
+    closeSwitch();
+    writeOutputs(true, false);
+    for (int i = 0; i < 3; i++) senseTick();
+    decShorted = true;
+    for (int i = 0; i < 4 && !driverTripped; i++) senseTick();
+    TEST_ASSERT_TRUE(driverTripped);
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, decDrv.fault);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DRV_EN]);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_INC_RELAY]);
+}
+
+void test_driver_trip_stays_until_reset(void) {
+    closeSwitch();
+    incShorted = true;
+    for (int i = 0; i < 4; i++) senseTick();
+    TEST_ASSERT_TRUE(driverTripped);
+    // With the switch open the shorted output reads dead. That must not be
+    // taken as the fault having gone: 60 s later the switch is still open.
+    for (int i = 0; i < 600; i++) {
+        senseTick();
+        TEST_ASSERT_TRUE(driverTripped);
+        TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_DRV_EN]);
+        TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_FAULT_LAMP]);
+    }
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);    // the cause stays on record
+    TEST_ASSERT_EQUAL(DRV_OK, swDrv.fault);           // and the switch did open
+}
+
+void test_driver_trip_stops_the_control_loop(void) {
+    enterAutoMode(2300.0f, 2100.0f);                  // would command INC
+    driverTripped = true;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+    TEST_ASSERT_EQUAL(HOLD_DRV_TRIP, holdReason);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_INC_RELAY]);
+    enterAutoMode(2300.0f, 2500.0f);                  // would command DEC
+    driverTripped = true;
+    runControlLoop();
+    TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DEC_RELAY]);
+}
+
+void test_driver_no_output_is_reported_and_never_trips(void) {
+    closeSwitch();
+    writeOutputs(false, true);                        // DEC commanded...
+    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_OFF;     // ...and the output stays dead
+    rawTick();
     TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
-    senseTick(); senseTick();
+    rawTick(); rawTick();
     TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
     TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    for (int i = 0; i < 100; i++) rawTick();
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DEC_RELAY]); // still being driven
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_FAULT_LAMP]);
+}
+
+void test_driver_no_output_is_withdrawn_only_on_positive_evidence(void) {
+    closeSwitch();
+    writeOutputs(false, true);
+    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_OFF;
+    rawTick(); rawTick(); rawTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
+    writeOutputs(false, false);                       // off and reading off proves nothing
+    rawTick(); rawTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
+    writeOutputs(false, true);
+    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_ON;      // seen on while commanded on
+    rawTick();
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+}
+
+void test_driver_no_output_changes_nothing_the_governor_does(void) {
+    DriverFault faults[2] = { DRV_OK, DRV_NO_OUTPUT };
+    for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) for (int c = 0; c < 2; c++) {
+        enterAutoMode(2300.0f, 2100.0f);
+        incDrv.fault = faults[a]; decDrv.fault = faults[b]; swDrv.fault = faults[c];
+        runControlLoop();
+        TEST_ASSERT_EQUAL(RELAY_INC, relayState);
+        TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+        enterAutoMode(2300.0f, 2500.0f);
+        incDrv.fault = faults[a]; decDrv.fault = faults[b]; swDrv.fault = faults[c];
+        runControlLoop();
+        TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
+        TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+    }
 }
 
 void test_driver_reading_just_after_a_change_is_not_judged(void) {
-    mock_millis = 1000;
+    closeSwitch();
     writeOutputs(true, false);                        // sense has not risen yet
     mock_millis += SENSE_SETTLE_MS - 1;
     checkDrivers();
@@ -739,15 +856,35 @@ void test_driver_reading_just_after_a_change_is_not_judged(void) {
     TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
 }
 
-void test_driver_brief_disagreement_is_never_reported(void) {
+void test_driver_outputs_are_not_judged_just_after_the_switch_closes(void) {
     mock_millis = 1000;
+    setSwitch(true);
+    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;
+    mock_millis += SENSE_SETTLE_MS - 1;
+    checkDrivers();
+    TEST_ASSERT_FALSE(incDrv.mismatch);
+}
+
+void test_driver_outputs_are_not_judged_with_the_switch_open(void) {
+    // Switch open: an output that reads live is being fed from outside the box
+    // (a test jumper, the panel switch on early-wiring aircraft). Not a trip.
+    mock_millis = 1000;
+    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;
+    for (int i = 0; i < 50; i++) rawTick();
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+}
+
+void test_driver_brief_disagreement_never_trips(void) {
+    closeSwitch();
     for (int i = 0; i < 20; i++) {
         mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;  // 100 ms of disagreement...
-        senseTick();
+        rawTick();
         mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_OFF; // ...then agreement restarts the clock
-        senseTick();
+        rawTick();
         TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
     }
+    TEST_ASSERT_FALSE(driverTripped);
 }
 
 void test_driver_threshold_separates_on_from_off(void) {
@@ -757,51 +894,24 @@ void test_driver_threshold_separates_on_from_off(void) {
     TEST_ASSERT_TRUE((int)(1.0 / 4.3 / 5.0 * 1023) < SENSE_ON_ADC - 100);
 }
 
-void test_driver_fault_is_withdrawn_only_on_positive_evidence(void) {
+void test_switch_dead_when_closed_is_reported_and_never_trips(void) {
     mock_millis = 1000;
-    // STUCK_ON: commanding the output on and seeing it on proves nothing.
-    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;
-    checkDrivers(); senseTick(); senseTick();
-    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
-    writeOutputs(true, false);
-    senseTick(); senseTick();
-    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
-    writeOutputs(false, false);
-    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_OFF;     // seen off while commanded off
-    senseTick();
-    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
-
-    // NO_OUTPUT: seeing the output off while commanded off proves nothing.
-    writeOutputs(false, true);
-    senseTick(); senseTick(); senseTick();
-    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
-    writeOutputs(false, false);
-    senseTick(); senseTick();
-    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
-    writeOutputs(false, true);
-    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_ON;      // seen on while commanded on
-    senseTick();
-    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+    setSwitch(true);                                  // commanded closed, 12V_SW stays dead
+    for (int i = 0; i < 5; i++) rawTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, swDrv.fault);
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
 }
 
-void test_driver_fault_changes_nothing_the_governor_does(void) {
-    // Monitoring only: with both drivers reported faulty in every combination,
-    // the control decision is exactly what it would be without the report.
-    DriverFault faults[3] = { DRV_OK, DRV_STUCK_ON, DRV_NO_OUTPUT };
-    for (int a = 0; a < 3; a++) {
-        for (int b = 0; b < 3; b++) {
-            enterAutoMode(2300.0f, 2100.0f);
-            incDrv.fault = faults[a]; decDrv.fault = faults[b];
-            runControlLoop();
-            TEST_ASSERT_EQUAL(RELAY_INC, relayState);
-            TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
-            enterAutoMode(2300.0f, 2500.0f);
-            incDrv.fault = faults[a]; decDrv.fault = faults[b];
-            runControlLoop();
-            TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
-            TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
-        }
-    }
+void test_switch_that_will_not_open_after_a_trip_is_reported(void) {
+    closeSwitch();
+    incShorted = true;
+    for (int i = 0; i < 4; i++) senseTick();
+    TEST_ASSERT_TRUE(driverTripped);
+    mock_adc[PIN_SW_SENSE - A0] = SENSE_ADC_ON;       // commanded open, still live
+    for (int i = 0; i < 4; i++) rawTick();
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, swDrv.fault);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DRV_EN]);     // still commanded open
 }
 
 void test_write_outputs_switches_off_before_on(void) {
@@ -1067,7 +1177,37 @@ void test_loop_ringing_on_every_pulse_does_not_corrupt_rpm(void) {
 // Entry point
 // =============================================================================
 
-void test_loop_healthy_drivers_never_report_a_fault(void) {
+void test_boot_closes_the_series_switch_after_checking_it(void) {
+    boot(adcForOhms(5000));
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
+    TEST_ASSERT_TRUE(swDrv.cmd);
+    TEST_ASSERT_EQUAL(DRV_OK, swDrv.fault);
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_INC_RELAY]);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DEC_RELAY]);
+}
+
+void test_boot_reports_a_series_switch_that_is_already_live(void) {
+    mock_adc[PIN_SW_SENSE - A0] = SENSE_ADC_ON;   // live before it has been closed
+    boot(adcForOhms(5000));
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, swDrv.fault); // reported...
+    TEST_ASSERT_FALSE(driverTripped);             // ...and the governor runs on
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
+}
+
+void test_loop_fault_lamp_is_tested_at_power_up_then_stays_off(void) {
+    boot(adcForOhms(5000));
+    senseFollowsOutputs = true;
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_FAULT_LAMP]);
+    runLoopFor(LAMP_TEST_MS - 200, 0);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_FAULT_LAMP]);
+    runLoopFor(400, 0);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_FAULT_LAMP]);
+    runLoopFor(5000, US_PER_PULSE(1900));         // ordinary governing
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_FAULT_LAMP]);
+}
+
+void test_loop_healthy_drivers_never_report_or_trip(void) {
     boot(adcForOhms(5000));                       // knob mid-travel
     senseFollowsOutputs = true;
     runLoopFor(4000, US_PER_PULSE(1900));         // below the knob: INC
@@ -1077,18 +1217,58 @@ void test_loop_healthy_drivers_never_report_a_fault(void) {
     runLoopFor(3000, 0);                          // signal lost: standby
     TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
     TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, swDrv.fault);
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
 }
 
-void test_loop_stuck_output_is_reported_and_governing_carries_on(void) {
+void test_loop_shorted_output_trips_within_half_a_second(void) {
     boot(adcForOhms(5000));
-    senseFollowsOutputs = false;
-    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_ON;  // DEC output live whatever is commanded
-    runLoopFor(4000, US_PER_PULSE(1900));         // RPM below the knob setting
-    TEST_ASSERT_EQUAL(DRV_STUCK_ON, decDrv.fault);
+    senseFollowsOutputs = true;
+    runLoopFor(3000, US_PER_PULSE(2225));         // governing, on speed, relays off
+    TEST_ASSERT_FALSE(driverTripped);
+    decShorted = true;                            // DEC transistor fails short
+    runLoopFor(500, US_PER_PULSE(2225));
+    TEST_ASSERT_TRUE(driverTripped);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_DRV_EN]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_FAULT_LAMP]);
     TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
-    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
-    TEST_ASSERT_TRUE(sawInc);                     // the governor still does its job
+    // The engine slows: the governor would want INC, and must not drive.
+    sawInc = sawDec = false;
+    runLoopFor(5000, US_PER_PULSE(1900));
+    TEST_ASSERT_FALSE(sawInc);
     TEST_ASSERT_FALSE(sawDec);
+    TEST_ASSERT_EQUAL(HOLD_DRV_TRIP, holdReason);
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DRV_EN]);
+}
+
+void test_loop_power_cycle_clears_a_trip_and_a_real_short_trips_again(void) {
+    boot(adcForOhms(5000));
+    senseFollowsOutputs = true;
+    incShorted = true;
+    runLoopFor(1000, US_PER_PULSE(2225));
+    TEST_ASSERT_TRUE(driverTripped);
+
+    // Prop switch out of AUTO and back: the box restarts.
+    memset(mock_pin, LOW, sizeof(mock_pin));
+    memset(mock_adc, 0, sizeof(mock_adc));
+    boot(adcForOhms(5000));
+    senseFollowsOutputs = true;
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DRV_EN]);
+    runLoopFor(1000, US_PER_PULSE(2225));
+    TEST_ASSERT_TRUE(driverTripped);              // the transistor is still shorted
+    TEST_ASSERT_EQUAL(LOW, mock_pin[PIN_DRV_EN]);
+
+    // A unit that was repaired comes back and governs.
+    incShorted = false;
+    memset(mock_pin, LOW, sizeof(mock_pin));
+    memset(mock_adc, 0, sizeof(mock_adc));
+    boot(adcForOhms(5000));
+    senseFollowsOutputs = true;
+    runLoopFor(4000, US_PER_PULSE(1900));
+    TEST_ASSERT_FALSE(driverTripped);
+    TEST_ASSERT_TRUE(sawInc);
 }
 
 int main(void) {
@@ -1177,16 +1357,27 @@ int main(void) {
     RUN_TEST(test_loop_ringing_on_every_pulse_does_not_corrupt_rpm);
 
     RUN_TEST(test_driver_readback_ok_when_outputs_follow_commands);
-    RUN_TEST(test_driver_stuck_on_is_reported_after_it_persists);
-    RUN_TEST(test_driver_no_output_is_reported_after_it_persists);
+    RUN_TEST(test_driver_stuck_on_trips_the_series_switch);
+    RUN_TEST(test_driver_stuck_on_trips_while_the_other_relay_is_driven);
+    RUN_TEST(test_driver_trip_stays_until_reset);
+    RUN_TEST(test_driver_trip_stops_the_control_loop);
+    RUN_TEST(test_driver_no_output_is_reported_and_never_trips);
+    RUN_TEST(test_driver_no_output_is_withdrawn_only_on_positive_evidence);
+    RUN_TEST(test_driver_no_output_changes_nothing_the_governor_does);
     RUN_TEST(test_driver_reading_just_after_a_change_is_not_judged);
-    RUN_TEST(test_driver_brief_disagreement_is_never_reported);
+    RUN_TEST(test_driver_outputs_are_not_judged_just_after_the_switch_closes);
+    RUN_TEST(test_driver_outputs_are_not_judged_with_the_switch_open);
+    RUN_TEST(test_driver_brief_disagreement_never_trips);
     RUN_TEST(test_driver_threshold_separates_on_from_off);
-    RUN_TEST(test_driver_fault_is_withdrawn_only_on_positive_evidence);
-    RUN_TEST(test_driver_fault_changes_nothing_the_governor_does);
+    RUN_TEST(test_switch_dead_when_closed_is_reported_and_never_trips);
+    RUN_TEST(test_switch_that_will_not_open_after_a_trip_is_reported);
     RUN_TEST(test_write_outputs_switches_off_before_on);
-    RUN_TEST(test_loop_healthy_drivers_never_report_a_fault);
-    RUN_TEST(test_loop_stuck_output_is_reported_and_governing_carries_on);
+    RUN_TEST(test_boot_closes_the_series_switch_after_checking_it);
+    RUN_TEST(test_boot_reports_a_series_switch_that_is_already_live);
+    RUN_TEST(test_loop_fault_lamp_is_tested_at_power_up_then_stays_off);
+    RUN_TEST(test_loop_healthy_drivers_never_report_or_trip);
+    RUN_TEST(test_loop_shorted_output_trips_within_half_a_second);
+    RUN_TEST(test_loop_power_cycle_clears_a_trip_and_a_real_short_trips_again);
 
     return UNITY_END();
 }
