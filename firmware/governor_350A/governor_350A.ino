@@ -93,6 +93,21 @@
 #define POT_SAMPLES         4       // ADC readings averaged per read (~0.5ms total)
 #define POT_HYST_RPM        5       // Target only moves when the knob has moved at least this far
 
+// ── OUTPUT DRIVER READBACK ────────────────────────────────────────────────────
+// Each relay output is divided by 4.3 into an ADC pin, so the firmware can see
+// whether an output is really doing what it was told: on when commanded on
+// (driver transistors alive), off when commanded off (not failed short).
+//
+// This is MONITORING ONLY. A disagreement is reported on the serial console
+// and the bench display, and changes nothing the governor does. The firmware
+// cannot switch off an output whose transistor has failed short -- that takes
+// a second switch in series, which Rev 3.3 does not have. The one thing it
+// could do, refuse to drive the other relay, is not clearly better than
+// carrying on, so it does not.
+#define SENSE_ON_ADC     205     // Output counts as ON above this: about 1.0 V at the pin, 4.3 V at the output
+#define SENSE_SETTLE_MS  10      // A reading this soon after the output changed is not judged
+#define DRV_FAULT_MS     200     // A disagreement must last this long before it is reported
+
 // ── HARDWARE PINS ─────────────────────────────────────────────────────────────
 #define PIN_RPM_INPUT   2   // 6N137 output -> INT0 (hardware interrupt)
 #define PIN_INC_RELAY   6   // NPN base (via 1k) -> PNP high-side switch -> INC RPM relay (fine pitch)
@@ -100,8 +115,7 @@
 #define PIN_INC_LED     8   // Red LED — INC activity indicator
 #define PIN_DEC_LED     9   // Green LED — DEC activity indicator
 #define PIN_POT         A7  // Panel pot sense (analog-only pin)
-// Relay output readback — HARDWARE PROVISION ONLY on Rev 3.3 (33k/10k dividers).
-// Nothing reads these yet; stuck-output monitoring is a follow-up item.
+// Relay output readback (33k/10k dividers) — see OUTPUT DRIVER READBACK below.
 #define PIN_INC_SENSE   A3  // INC_RELAY output / 4.3
 #define PIN_DEC_SENSE   A6  // DEC_RELAY output / 4.3 (analog-only pin)
 // A4 = SDA, A5 = SCL — optional OLED on the 4-pin service header (Wire library)
@@ -156,6 +170,19 @@ bool     rpmBufFull = false;
 
 float    actualRPM       = 0.0;
 uint32_t lastMagPulse_ms = 0;
+
+// ── OUTPUT DRIVER READBACK STATE ──────────────────────────────────────────────
+enum DriverFault { DRV_OK, DRV_STUCK_ON, DRV_NO_OUTPUT };
+struct DriverMon {
+  uint8_t     sensePin;
+  bool        cmd;               // What the output pin was last told
+  uint32_t    change_ms;         // When cmd last changed
+  bool        mismatch;          // A disagreement is being timed
+  uint32_t    mismatchSince_ms;
+  DriverFault fault;             // Reported state. Never acted on.
+};
+DriverMon incDrv = { PIN_INC_SENSE, false, 0, false, 0, DRV_OK };
+DriverMon decDrv = { PIN_DEC_SENSE, false, 0, false, 0, DRV_OK };
 
 // ── RELAY TIMING ──────────────────────────────────────────────────────────────
 uint32_t lastControlRun    = 0;
@@ -234,11 +261,21 @@ bool rpmValid() {
 // RELAY CONTROL
 // =============================================================================
 
+// The only place the relay outputs are written. It records what each output
+// was told, and when, for the readback check. The output going off is always
+// written before the one coming on.
+void writeOutputs(bool inc, bool dec) {
+  uint32_t now = millis();
+  if (inc != incDrv.cmd) { incDrv.cmd = inc; incDrv.change_ms = now; }
+  if (dec != decDrv.cmd) { decDrv.cmd = dec; decDrv.change_ms = now; }
+  if (!inc) { digitalWrite(PIN_INC_RELAY, LOW);  digitalWrite(PIN_INC_LED, LOW);  }
+  if (!dec) { digitalWrite(PIN_DEC_RELAY, LOW);  digitalWrite(PIN_DEC_LED, LOW);  }
+  if (inc)  { digitalWrite(PIN_INC_RELAY, HIGH); digitalWrite(PIN_INC_LED, HIGH); }
+  if (dec)  { digitalWrite(PIN_DEC_RELAY, HIGH); digitalWrite(PIN_DEC_LED, HIGH); }
+}
+
 void relayOff() {
-  digitalWrite(PIN_INC_RELAY, LOW);
-  digitalWrite(PIN_DEC_RELAY, LOW);
-  digitalWrite(PIN_INC_LED,   LOW);
-  digitalWrite(PIN_DEC_LED,   LOW);
+  writeOutputs(false, false);
   relayState = RELAY_OFF;
 }
 
@@ -261,19 +298,56 @@ void setRelay(RelayState direction, float duty) {
   uint32_t onMs      = (uint32_t)(duty * CONTROL_INTERVAL_MS);
   bool     shouldBeOn = (pos < onMs);
 
-  if (direction == RELAY_INC) {
-    digitalWrite(PIN_INC_RELAY, shouldBeOn ? HIGH : LOW);
-    digitalWrite(PIN_DEC_RELAY, LOW);
-    digitalWrite(PIN_INC_LED,   shouldBeOn ? HIGH : LOW);
-    digitalWrite(PIN_DEC_LED,   LOW);
-  } else {
-    digitalWrite(PIN_DEC_RELAY, shouldBeOn ? HIGH : LOW);
-    digitalWrite(PIN_INC_RELAY, LOW);
-    digitalWrite(PIN_DEC_LED,   shouldBeOn ? HIGH : LOW);
-    digitalWrite(PIN_INC_LED,   LOW);
-  }
+  writeOutputs(direction == RELAY_INC && shouldBeOn,
+               direction == RELAY_DEC && shouldBeOn);
 
   relayState = direction;
+}
+
+
+// =============================================================================
+// OUTPUT DRIVER READBACK (monitoring only)
+// =============================================================================
+
+const char* driverFaultName(DriverFault f) {
+  return f == DRV_STUCK_ON ? "STUCK_ON" : f == DRV_NO_OUTPUT ? "NO_OUTPUT" : "OK";
+}
+
+// Compare one output with what it was told. A fault is reported only after
+// the disagreement has lasted DRV_FAULT_MS, and is withdrawn only on positive
+// evidence: STUCK_ON when the output is seen off while commanded off,
+// NO_OUTPUT when it is seen on while commanded on.
+void checkDriver(DriverMon &d, uint32_t now) {
+  if ((now - d.change_ms) < SENSE_SETTLE_MS) return;
+  analogRead(d.sensePin);                       // settle the ADC input, discard
+  bool high = analogRead(d.sensePin) > SENSE_ON_ADC;
+
+  if (high == d.cmd) {
+    d.mismatch = false;
+    if ((d.fault == DRV_STUCK_ON && !high) || (d.fault == DRV_NO_OUTPUT && high)) {
+      d.fault = DRV_OK;
+    }
+    return;
+  }
+  if (!d.mismatch) { d.mismatch = true; d.mismatchSince_ms = now; }
+  if ((now - d.mismatchSince_ms) >= DRV_FAULT_MS) {
+    d.fault = d.cmd ? DRV_NO_OUTPUT : DRV_STUCK_ON;
+  }
+}
+
+// Called once per control tick, before the control decision, so each reading
+// is taken a full tick after the outputs were last written.
+void checkDrivers() {
+  uint32_t now = millis();
+  DriverFault wasInc = incDrv.fault, wasDec = decDrv.fault;
+  checkDriver(incDrv, now);
+  checkDriver(decDrv, now);
+  if (incDrv.fault != wasInc) {
+    Serial.print(F("DRIVER INC: ")); Serial.println(driverFaultName(incDrv.fault));
+  }
+  if (decDrv.fault != wasDec) {
+    Serial.print(F("DRIVER DEC: ")); Serial.println(driverFaultName(decDrv.fault));
+  }
 }
 
 
@@ -500,7 +574,11 @@ void updateDisplay() {
 
   // Row 4: status bar
   display.setCursor(0, 56);
-  if (currentMode != MODE_AUTO) {
+  if (incDrv.fault != DRV_OK || decDrv.fault != DRV_OK) {
+    bool isInc = (incDrv.fault != DRV_OK);
+    display.print(isInc ? F("INC ") : F("DEC "));
+    display.print(driverFaultName(isInc ? incDrv.fault : decDrv.fault));
+  } else if (currentMode != MODE_AUTO) {
     display.print(F("MANUAL"));
   } else if (holdReason == HOLD_NO_MAG) {
     display.print(F("NO MAG SIGNAL"));
@@ -556,7 +634,9 @@ void printStatus() {
   Serial.print(F(" ACT="));    Serial.print((int)actualRPM);
   Serial.print(F(" Err="));    Serial.print((int)(rampedSetpoint - actualRPM));
   Serial.print(F(" Relay="));
-  Serial.println(relayState == RELAY_INC ? F("INC") : relayState == RELAY_DEC ? F("DEC") : F("OFF"));
+  Serial.print(relayState == RELAY_INC ? F("INC") : relayState == RELAY_DEC ? F("DEC") : F("OFF"));
+  Serial.print(F(" DrvInc=")); Serial.print(driverFaultName(incDrv.fault));
+  Serial.print(F(" DrvDec=")); Serial.println(driverFaultName(decDrv.fault));
 }
 
 // Bench/service console. Nothing here is needed in the aircraft.
@@ -694,6 +774,7 @@ void loop() {
   // Control loop at 10Hz
   if ((now - lastControlRun) >= CONTROL_INTERVAL_MS) {
     lastControlRun = now;
+    checkDrivers();      // reads the outputs as the last tick left them
     runControlLoop();
   }
 

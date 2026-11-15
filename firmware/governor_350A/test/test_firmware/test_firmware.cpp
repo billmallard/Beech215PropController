@@ -37,6 +37,17 @@ static uint16_t adcForOhms(float ohms) {
     return (uint16_t)(1023.0f * ohms / (ohms + 10000.0f) + 0.5f);
 }
 
+// Readback dividers as the ADC sees them: about 2.8 V (573 counts) with the
+// output at 12 V, 0 with it off.
+#define SENSE_ADC_ON   573
+#define SENSE_ADC_OFF  0
+static bool senseFollowsOutputs = false;
+// A healthy board: each sense input follows its output pin.
+static void mirrorSense(void) {
+    mock_adc[PIN_INC_SENSE - A0] = mock_pin[PIN_INC_RELAY] == HIGH ? SENSE_ADC_ON : SENSE_ADC_OFF;
+    mock_adc[PIN_DEC_SENSE - A0] = mock_pin[PIN_DEC_RELAY] == HIGH ? SENSE_ADC_ON : SENSE_ADC_OFF;
+}
+
 // =============================================================================
 // Test fixture — reset all firmware global state before each test
 // =============================================================================
@@ -79,6 +90,10 @@ void setUp(void) {
     lastControlRun           = 0;
     lastDisplayUpdate        = 0;
     displayOK                = false;
+
+    incDrv = { PIN_INC_SENSE, false, 0, false, 0, DRV_OK };
+    decDrv = { PIN_DEC_SENSE, false, 0, false, 0, DRV_OK };
+    senseFollowsOutputs      = false;
 }
 
 void tearDown(void) {}
@@ -670,6 +685,144 @@ void test_control_low_rpm_hold_keeps_a_pending_ramp_restart(void) {
     TEST_ASSERT_EQUAL(RELAY_OFF, relayState);
 }
 
+// ---- Output driver readback (monitoring only) ----
+
+// One control tick's worth of readback, 100 ms after the last one.
+static void senseTick(void) {
+    mock_millis += CONTROL_INTERVAL_MS;
+    checkDrivers();
+}
+
+void test_driver_readback_ok_when_outputs_follow_commands(void) {
+    mock_millis = 1000;
+    writeOutputs(true, false);  mirrorSense();
+    for (int i = 0; i < 5; i++) senseTick();
+    writeOutputs(false, true);  mirrorSense();
+    for (int i = 0; i < 5; i++) senseTick();
+    writeOutputs(false, false); mirrorSense();
+    for (int i = 0; i < 5; i++) senseTick();
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+}
+
+void test_driver_stuck_on_is_reported_after_it_persists(void) {
+    mock_millis = 1000;
+    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;      // live with the command off
+    checkDrivers();                                   // t = 0: disagreement first seen
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    senseTick();                                      // 100 ms
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    senseTick();                                      // 200 ms
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);          // the other channel is untouched
+}
+
+void test_driver_no_output_is_reported_after_it_persists(void) {
+    mock_millis = 1000;
+    writeOutputs(false, true);                        // DEC commanded, sense stays at 0
+    senseTick();
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+    senseTick(); senseTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+}
+
+void test_driver_reading_just_after_a_change_is_not_judged(void) {
+    mock_millis = 1000;
+    writeOutputs(true, false);                        // sense has not risen yet
+    mock_millis += SENSE_SETTLE_MS - 1;
+    checkDrivers();
+    TEST_ASSERT_FALSE(incDrv.mismatch);
+    mock_millis += 1;
+    checkDrivers();
+    TEST_ASSERT_TRUE(incDrv.mismatch);                // now it counts
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+}
+
+void test_driver_brief_disagreement_is_never_reported(void) {
+    mock_millis = 1000;
+    for (int i = 0; i < 20; i++) {
+        mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;  // 100 ms of disagreement...
+        senseTick();
+        mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_OFF; // ...then agreement restarts the clock
+        senseTick();
+        TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    }
+}
+
+void test_driver_threshold_separates_on_from_off(void) {
+    // 8 V bus (cranking) through the divider is still far above the threshold;
+    // a volt of noise on a dead output is still far below it.
+    TEST_ASSERT_TRUE((int)(8.0 / 4.3 / 5.0 * 1023) > SENSE_ON_ADC + 100);
+    TEST_ASSERT_TRUE((int)(1.0 / 4.3 / 5.0 * 1023) < SENSE_ON_ADC - 100);
+}
+
+void test_driver_fault_is_withdrawn_only_on_positive_evidence(void) {
+    mock_millis = 1000;
+    // STUCK_ON: commanding the output on and seeing it on proves nothing.
+    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_ON;
+    checkDrivers(); senseTick(); senseTick();
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
+    writeOutputs(true, false);
+    senseTick(); senseTick();
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, incDrv.fault);
+    writeOutputs(false, false);
+    mock_adc[PIN_INC_SENSE - A0] = SENSE_ADC_OFF;     // seen off while commanded off
+    senseTick();
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+
+    // NO_OUTPUT: seeing the output off while commanded off proves nothing.
+    writeOutputs(false, true);
+    senseTick(); senseTick(); senseTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
+    writeOutputs(false, false);
+    senseTick(); senseTick();
+    TEST_ASSERT_EQUAL(DRV_NO_OUTPUT, decDrv.fault);
+    writeOutputs(false, true);
+    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_ON;      // seen on while commanded on
+    senseTick();
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+}
+
+void test_driver_fault_changes_nothing_the_governor_does(void) {
+    // Monitoring only: with both drivers reported faulty in every combination,
+    // the control decision is exactly what it would be without the report.
+    DriverFault faults[3] = { DRV_OK, DRV_STUCK_ON, DRV_NO_OUTPUT };
+    for (int a = 0; a < 3; a++) {
+        for (int b = 0; b < 3; b++) {
+            enterAutoMode(2300.0f, 2100.0f);
+            incDrv.fault = faults[a]; decDrv.fault = faults[b];
+            runControlLoop();
+            TEST_ASSERT_EQUAL(RELAY_INC, relayState);
+            TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+            enterAutoMode(2300.0f, 2500.0f);
+            incDrv.fault = faults[a]; decDrv.fault = faults[b];
+            runControlLoop();
+            TEST_ASSERT_EQUAL(RELAY_DEC, relayState);
+            TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+        }
+    }
+}
+
+void test_write_outputs_switches_off_before_on(void) {
+    mock_millis = 1000;
+    writeOutputs(true, false);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_INC_RELAY]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_INC_LED]);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_DEC_RELAY]);
+    mock_millis = 1500;
+    writeOutputs(false, true);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_INC_RELAY]);
+    TEST_ASSERT_EQUAL(LOW,  mock_pin[PIN_INC_LED]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DEC_RELAY]);
+    TEST_ASSERT_EQUAL(HIGH, mock_pin[PIN_DEC_LED]);
+    TEST_ASSERT_EQUAL_UINT32(1500, incDrv.change_ms);
+    TEST_ASSERT_EQUAL_UINT32(1500, decDrv.change_ms);
+    mock_millis = 1700;
+    writeOutputs(false, true);                        // no change: times stand
+    TEST_ASSERT_EQUAL_UINT32(1500, decDrv.change_ms);
+}
+
 // ---- The ramp never makes the governor drive away from the knob setting ----
 
 // One 100 ms control tick with the ramp running, as loop() does it.
@@ -787,6 +940,7 @@ static void runLoopFor(uint32_t ms, uint32_t pulse_us) {
         mock_micros += 500;                       // loop() pass every 0.5 ms
         mock_millis  = mock_micros / 1000;
         if (pulse_us && mock_micros >= nextPulse) { magPulseISR(); nextPulse += pulse_us; }
+        if (senseFollowsOutputs) mirrorSense();
         loop();
         if (mock_pin[PIN_INC_RELAY] == HIGH) sawInc = true;
         if (mock_pin[PIN_DEC_RELAY] == HIGH) sawDec = true;
@@ -913,6 +1067,30 @@ void test_loop_ringing_on_every_pulse_does_not_corrupt_rpm(void) {
 // Entry point
 // =============================================================================
 
+void test_loop_healthy_drivers_never_report_a_fault(void) {
+    boot(adcForOhms(5000));                       // knob mid-travel
+    senseFollowsOutputs = true;
+    runLoopFor(4000, US_PER_PULSE(1900));         // below the knob: INC
+    TEST_ASSERT_TRUE(sawInc);
+    runLoopFor(4000, US_PER_PULSE(2600));         // above the knob: DEC
+    TEST_ASSERT_TRUE(sawDec);
+    runLoopFor(3000, 0);                          // signal lost: standby
+    TEST_ASSERT_EQUAL(DRV_OK, incDrv.fault);
+    TEST_ASSERT_EQUAL(DRV_OK, decDrv.fault);
+}
+
+void test_loop_stuck_output_is_reported_and_governing_carries_on(void) {
+    boot(adcForOhms(5000));
+    senseFollowsOutputs = false;
+    mock_adc[PIN_DEC_SENSE - A0] = SENSE_ADC_ON;  // DEC output live whatever is commanded
+    runLoopFor(4000, US_PER_PULSE(1900));         // RPM below the knob setting
+    TEST_ASSERT_EQUAL(DRV_STUCK_ON, decDrv.fault);
+    TEST_ASSERT_EQUAL(MODE_AUTO, currentMode);
+    TEST_ASSERT_EQUAL(HOLD_NONE, holdReason);
+    TEST_ASSERT_TRUE(sawInc);                     // the governor still does its job
+    TEST_ASSERT_FALSE(sawDec);
+}
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -997,6 +1175,18 @@ int main(void) {
     RUN_TEST(test_loop_governs_by_itself_once_signal_is_valid);
     RUN_TEST(test_loop_mag_dropout_goes_to_standby_then_resumes);
     RUN_TEST(test_loop_ringing_on_every_pulse_does_not_corrupt_rpm);
+
+    RUN_TEST(test_driver_readback_ok_when_outputs_follow_commands);
+    RUN_TEST(test_driver_stuck_on_is_reported_after_it_persists);
+    RUN_TEST(test_driver_no_output_is_reported_after_it_persists);
+    RUN_TEST(test_driver_reading_just_after_a_change_is_not_judged);
+    RUN_TEST(test_driver_brief_disagreement_is_never_reported);
+    RUN_TEST(test_driver_threshold_separates_on_from_off);
+    RUN_TEST(test_driver_fault_is_withdrawn_only_on_positive_evidence);
+    RUN_TEST(test_driver_fault_changes_nothing_the_governor_does);
+    RUN_TEST(test_write_outputs_switches_off_before_on);
+    RUN_TEST(test_loop_healthy_drivers_never_report_a_fault);
+    RUN_TEST(test_loop_stuck_output_is_reported_and_governing_carries_on);
 
     return UNITY_END();
 }

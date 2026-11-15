@@ -12,6 +12,7 @@ How it behaves, deliberately matching the original 350A box:
 - **Whenever governing starts or resumes, the setpoint starts at the actual RPM** and walks to the knob position at `RAMP_RATE_RPM_PER_SEC`.
 - **The ramp never makes the governor drive away from the knob setting.** The tracked setpoint is kept between the actual RPM and the knob setting. If the RPM moves toward the knob setting faster than the ramp (throttle advanced, engine starting or restarting), the ramp rides the actual RPM and no relay is driven; if the RPM is already beyond the knob setting, the governor works straight against the knob setting.
 - **The OLED is optional.** It is probed once at boot; with nothing on the J2 service header there is no I2C traffic at all.
+- **Relay outputs are read back (monitoring only).** Each control tick the firmware reads both relay outputs through the 33k/10k dividers on A3 and A6 and compares them with what it commanded. A disagreement lasting 200 ms is reported on the console and the bench display as `STUCK_ON` (live while commanded off) or `NO_OUTPUT` (dead while commanded on), and withdrawn only when the output is seen behaving. **Nothing the governor does changes.** The firmware cannot switch off an output whose transistor has failed short; that needs a second switch in series, which Rev 3.3 does not have.
 - **No upper RPM limit.** However high the reading, the governor commands a decrease, as the original does. (A 3500 RPM cut-off existed until 2026-11-15; it made the governor go quiet in exactly the overspeed it should be correcting.)
 - **Nothing latches.** `RPM LOW` (a reading below `RPM_MIN_VALID`, 400) is a standby like the other two: relays off while it lasts, governing resumes by itself. It is the one standby that does not restart the ramp, so the governor commands an increase against the knob setting at once when the reading comes back up (an engine being restarted in flight). The alarm state, `ALARM` mode and the serial `c` command were removed 2026-11-15.
 - **No limit on how long a relay may be commanded.** The output is held until the RPM reaches the knob setting, as on the original; the aircraft's limit switches stop the motor at the pitch stops. The 8-second `RELAY TIMEOUT` alarm was removed 2026-11-15: it latched the governor off whenever the prop rested on a stop.
@@ -106,8 +107,8 @@ PlatformIO integrates with VS Code and handles library management automatically.
 
 **Build output for v3.0 (PlatformIO 6.1.19, Adafruit SSD1306 2.5.17, GFX 1.13.0):**
 ```
-RAM:   [===       ]  31.4% (used 643 bytes from 2048 bytes)
-Flash: [=======   ]  73.1% (used 22470 bytes from 30720 bytes)
+RAM:   [===       ]  33.7% (used 691 bytes from 2048 bytes)
+Flash: [========  ]  76.1% (used 23364 bytes from 30720 bytes)
 [SUCCESS]
 ```
 
@@ -182,10 +183,10 @@ None of these are needed in the aircraft. There is no command to simulate the kn
 
 **Example status output (`s` command):**
 ```
-Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF
+Mode=AUTO Hold=- PotADC=341 Target=2225 Ramped=2225 ACT=2203 Err=22 Relay=OFF DrvInc=OK DrvDec=OK
 ```
 
-`Hold` shows why AUTO is not driving (`NO_MAG`, `POT_OPEN`, or `-` when governing). `PotADC` is the filtered pot reading: 0 at full clockwise, about 512 at full counter-clockwise, about 1023 with the pot disconnected. When in AUTO mode, the status line prints automatically every 2 seconds.
+`Hold` shows why AUTO is not driving (`NO_MAG`, `RPM_LOW`, `POT_OPEN`, or `-` when governing). `DrvInc` and `DrvDec` are the output readback for each relay driver (`OK`, `STUCK_ON`, `NO_OUTPUT`). `PotADC` is the filtered pot reading: 0 at full clockwise, about 512 at full counter-clockwise, about 1023 with the pot disconnected. When in AUTO mode, the status line prints automatically every 2 seconds.
 
 ---
 
@@ -206,9 +207,10 @@ Tests mock all Arduino/AVR hardware APIs (GPIO, ADC, timers, I2C, watchdog) and 
 | `updatePot()` / `readPotAdc()` | 9 | First reading seeds the target; target follows the knob; both end stops are reached exactly; ±1 count of ADC noise for 10 s never moves the target (three knob positions); an open reading trips only after 300 ms and never moves the target; a briefly lifting wiper is ignored; recovery is debounced and self-clearing; a worn 12k pot is minimum RPM, not a fault; the pot pin is averaged |
 | `updateRamp()` | 5 | Ramps up and down at 100 RPM/sec; snaps when within one step; never overshoots; a full-range knob slam is rate-limited |
 | `runControlLoop()` | 21 | INC below setpoint, DEC above, off inside the deadband; no action in MANUAL; mag loss is a non-latching standby; no drive until the RPM average has refilled; pot open holds relays off and recovers without a step; first governing pass seeds the ramp at actual RPM; there is no upper RPM limit (3501, 4000 and 6000 all command DEC); a reading below 400 is a standby with relays off and the mode still AUTO; 400 itself is governed; the low-RPM standby ends by itself, straight to INC with the ramp left at the knob setting; a ramp restart already pending (engine start) survives the low-RPM standby; the ramp never commands a decrease while the RPM rises toward the knob setting faster than the ramp, nor an increase while it falls toward it; RPM already beyond the knob setting is governed against the knob setting; a ramp lying between the RPM and the knob setting is left alone; a relay command has no time limit (60 s of continuous drive, then normal reversal); full duty outside the proportional zone; proportional duty inside it |
-| `setup()` / `loop()` | 8 | Boots straight into AUTO with relays off and the target read from the pot; boot with an open pot stays in `POT OPEN` and never drives; no display means exactly one I2C probe and no further traffic; a detected display is enabled; 10 s with no magneto signal never drives and never alarms; governs by itself once the signal is valid, ramp starting at actual RPM; a signal dropout drops the relays within 2 s, stays in AUTO, and resumes by itself at the new RPM without a false alarm; ringing on every pulse does not corrupt the RPM reading |
+| `setup()` / `loop()` | 10 | Boots straight into AUTO with relays off and the target read from the pot; boot with an open pot stays in `POT OPEN` and never drives; no display means exactly one I2C probe and no further traffic; a detected display is enabled; 10 s with no magneto signal never drives and never alarms; governs by itself once the signal is valid, ramp starting at actual RPM; a signal dropout drops the relays within 2 s, stays in AUTO, and resumes by itself at the new RPM without a false alarm; ringing on every pulse does not corrupt the RPM reading; a healthy board never reports a driver fault through INC, DEC and standby; a stuck output is reported and governing carries on |
+| Output readback (`writeOutputs()`, `checkDrivers()`) | 9 | Outputs that follow their commands read `OK`; `STUCK_ON` and `NO_OUTPUT` are reported only after 200 ms and only on the affected channel; a reading within 10 ms of an output change is not judged; a brief disagreement is never reported; the threshold separates an 8 V bus from a volt of noise; a fault is withdrawn only on positive evidence; a reported fault changes nothing the control loop decides (all nine combinations); the output going off is written before the one coming on |
 
-**Total: 66 tests, 0 failures.**
+**Total: 77 tests, 0 failures.**
 
 ### What Is Not Testable Without Hardware
 
@@ -268,13 +270,13 @@ Adjust the VS path for your installed version (2017/2019/2022).
 #### Expected output
 
 ```
-test\test_firmware\test_firmware.cpp:920:test_isr_first_pulse_reports_no_interval:PASS
-test\test_firmware\test_firmware.cpp:921:test_isr_reports_interval_between_pulses:PASS
+test\test_firmware\test_firmware.cpp:1098:test_isr_first_pulse_reports_no_interval:PASS
+test\test_firmware\test_firmware.cpp:1099:test_isr_reports_interval_between_pulses:PASS
 ...
-test\test_firmware\test_firmware.cpp:999:test_loop_ringing_on_every_pulse_does_not_corrupt_rpm:PASS
+test\test_firmware\test_firmware.cpp:1189:test_loop_stuck_output_is_reported_and_governing_carries_on:PASS
 
 -----------------------
-66 Tests 0 Failures 0 Ignored
+77 Tests 0 Failures 0 Ignored
 OK
 ```
 
@@ -293,7 +295,7 @@ firmware/governor_350A/
     │   └── avr/
     │       └── wdt.h          ← wdt_enable/wdt_reset no-ops
     └── test_firmware/
-        └── test_firmware.cpp  ← 66 Unity test cases
+        └── test_firmware.cpp  ← 77 Unity test cases
 ```
 
 ---
@@ -315,4 +317,7 @@ All tuning constants are `#define`d at the top of the sketch. Defaults are conse
 | `POT_OPEN_MS` | 300 | How long an open (or recovered) reading must persist before the state changes. |
 | `POT_HYST_RPM` | 5 | The target only moves when the knob has moved at least this far, so a stationary knob never jitters. |
 | `RPM_MIN_VALID` | 400 | A reading below this is not governed (relays off, `RPM LOW`, self-recovering). There is no upper limit. |
+| `SENSE_ON_ADC` | 205 | A relay output counts as on above this reading: about 4.3 V at the output. An 8 V bus reads about 380. |
+| `SENSE_SETTLE_MS` | 10 | A readback taken this soon after the output changed is not judged. |
+| `DRV_FAULT_MS` | 200 | How long an output must disagree with its command before a driver fault is reported. |
 | `CONTROL_INTERVAL_MS` | 100 | Control loop cadence. Also the PWM period for proportional duty output. |
