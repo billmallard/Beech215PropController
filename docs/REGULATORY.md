@@ -65,7 +65,7 @@ The "data used to show airworthiness" is the critical part. Your data package sh
 
 2. **This project's engineering documentation** — specifically the spec document showing:
    - Identical external interface
-   - Added safety features (watchdog, mag timeout, relay timeout)
+   - Added safety features (watchdog, mag timeout)
    - Identical output behaviors (relay coil drive current, signal levels)
 
 3. **Pin-for-pin comparison table** — see [WIRING.md](WIRING.md), the "Pinout Cross-Reference" section. Print this for your 337 package.

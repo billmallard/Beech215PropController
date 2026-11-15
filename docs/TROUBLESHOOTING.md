@@ -9,10 +9,15 @@ and on the optional bench display.
 |---|---|---|---|
 | `NO MAG SIGNAL` | Standby — clears itself | No valid magneto pulses for more than 2 seconds, or the engine is not running. Both relays are off. Governing resumes when pulses return | Normal with the engine stopped. With the engine running: check the Pin H lead and the resistor-lug assembly at the right magneto (original Service Note 8) |
 | `POT OPEN` | Standby — clears itself | The panel control reads above about 16kΩ (open wire or worn control). Both relays are off | Check the control between connector pins E and F: under 100Ω full clockwise, 10kΩ full counter-clockwise, smooth in between |
-| `RELAY TIMEOUT` | Latched | One relay was commanded for more than 8 seconds without reaching the set RPM | The prop may be on a pitch stop, the motor stalled, or a limit switch open. Clears on the serial `c` command or by cycling the prop switch out of AUTO and back |
-| `RPM OUT OF RANGE` | Latched | Measured RPM below 400 or above 3500 | Usually a noisy magneto signal or the wrong `PULSES_PER_REV`. Clears as above |
+| `RPM LOW` | Standby — clears itself | Measured RPM below 400. Both relays are off. Governing resumes at once when the reading comes back up | Normal while the engine is being started or stopped. With the engine running normally: suspect the magneto signal or the wrong `PULSES_PER_REV` |
 
 The INC (red) and DEC (green) LEDs on the board follow the relay outputs.
+
+Nothing latches: every condition above clears by itself, and there is nothing to reset. There is no
+upper RPM limit: a high reading is answered with a decrease command, as on the original.
+
+There is no time limit on a relay command. As on the original, an output stays on until the RPM reaches
+the knob setting, including while the prop rests on a pitch stop with its limit switch open.
 
 ---
 

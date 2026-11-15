@@ -32,20 +32,29 @@ The safety layers ARE the product:
   v3.0, like the original: governing resumes once valid RPM is back
 - Panel-pot open circuit (reading above ~16k for 300ms) de-energizes both
   relays; non-latching
-- RPM sanity band (400–3500) triggers a latched alarm
-- 8s max continuous relay drive (`MAX_RELAY_MS`), latched, independent of
-  limit switches
-- Setpoint ramp (100 RPM/s) so knob movements never slam full duty
+- A reading below 400 RPM de-energizes both relays; non-latching, and it
+  resumes straight against the knob setting. There is deliberately **no
+  upper RPM limit**: a high reading gets a decrease command, as on the
+  original (Bill, 2026-11-15: an overspeed is when it must not go quiet)
+- Setpoint ramp (100 RPM/s) so knob movements never slam full duty. The
+  tracked setpoint is clamped between actual RPM and the knob setting, so
+  the ramp can never make the governor drive away from the knob
 - The pulse interrupt rejects intervals under 2ms (magneto ringing)
 
 Never weaken one of these to fix a bug elsewhere. A control-loop change is
 not done until it has a matching unit test and, where behavior on the bench
 changes, a note in [docs/BENCH_TEST.md](docs/BENCH_TEST.md).
 
-Known open problem (not yet decided by Bill): the two latched alarms can only
-be cleared in the aircraft by cycling the prop switch, and the 8s timeout
-trips when the prop sits on a pitch stop. See "Decisions still open" in
-`hardware_rev3_3/REV3_3_CHANGES.md`.
+**Nothing in the firmware latches** (Bill, 2026-11-15). The aircraft has no
+reset except the prop switch and the original has no latched state, so every
+protective condition is a standby that clears by itself. Do not add an alarm
+state back.
+
+There is deliberately **no relay timeout**. An 8s one existed until
+2026-11-15 and was removed: the original holds its output until the RPM is
+reached, the aircraft's limit switches stop the motor at the pitch stops,
+and a failed limit switch costs gear wear, not control (Bill: the manual
+circuit has no limit switches at all). Do not add one back.
 
 ## Layout
 
@@ -66,7 +75,7 @@ trips when the prop sits on a pitch stop. See "Decisions still open" in
 
 - `pio run` — AVR build (env `nanoatmega328`; Adafruit SSD1306 + GFX)
 - `pio run -t upload` then `pio device monitor --baud 9600` — flash + console
-- `pio test -e native` — 61 Unity tests, no hardware needed. Needs `g++` on
+- `pio test -e native` — 66 Unity tests, no hardware needed. Needs `g++` on
   PATH, which this Windows machine does not have: use the MSVC recipe in
   [firmware/governor_350A/README.md](firmware/governor_350A/README.md).
   `test/mocks/` stubs all Arduino/AVR headers and the test file `#include`s
@@ -94,10 +103,10 @@ after clone).
 - Control: 10Hz loop; relay duty is time-proportioned within each 100ms
   window (slow on/off for relay contacts, NOT fast PWM). Deadband ±25 RPM,
   proportional zone 75 RPM, minimum duty 25%.
-- Resources (v3.0, `pio run`): 74% flash, 33% static RAM. The Adafruit
+- Resources (v3.0, `pio run`): 73% flash, 31% static RAM. The Adafruit
   display buffer takes another 1KB of heap when a display is fitted, so keep
   print strings in flash with `F()` and avoid `String`.
-- Serial console at 9600: `s` status, `a`/`m` auto/manual, `c` clear alarm,
+- Serial console at 9600: `s` status, `a`/`m` auto/manual,
   `?` help.
 - The display is optional and only probed at power-up.
 

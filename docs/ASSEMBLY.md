@@ -220,8 +220,7 @@ Open `firmware/governor_350A/governor_350A.ino`. At the top of the file, find th
 // ── Control tuning ─────────────────────────────────────────────
 #define DEADBAND_RPM        25     // No correction within ±25 RPM of setpoint
 #define PROP_ZONE_RPM       75     // Proportional slowdown begins within ±75 RPM
-#define MAG_TIMEOUT_MS      2000   // Alarm if no magneto pulse for 2 seconds
-#define MAX_RELAY_MS        8000   // Safety cutoff: max relay on-time in ms
+#define MAG_TIMEOUT_MS      2000   // Relays off if no magneto pulse for 2 seconds
 ```
 
 ### 3.4 Flash

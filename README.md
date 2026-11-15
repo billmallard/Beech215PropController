@@ -31,7 +31,7 @@ The original Airborne Electronics 350A (covered under STC SA2700WE) uses a **ban
 | Setpoint transition | Follows the knob directly | Walks to the new knob setting at 100 RPM/sec — smooth, no lurch |
 | Fail-safe | RPM signal loss → no action | Same: no magneto signal for 2 seconds → both relays off; governing resumes when the signal returns |
 | Watchdog | None | Hardware watchdog resets MCU in 250ms if firmware stalls |
-| Motor runaway protection | Limit switches only | 8-second relay timeout regardless of limit switch state |
+| Motor travel limits | Limit switches | Same: the aircraft's limit switches. The governor holds its output until the RPM is reached, as the original does |
 
 ## Who This Is For
 

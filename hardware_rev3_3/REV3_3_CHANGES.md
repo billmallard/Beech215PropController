@@ -112,11 +112,20 @@ All of these were run on the files in this folder.
 - **Pot range.** Firmware v3.0 maps full clockwise to 2650 RPM and full
   counter-clockwise to 1800 RPM. Both are placeholders
   (`POT_RPM_MAX` / `POT_RPM_MIN`).
-- **Latched alarms on a box with no panel.** The 8-second relay timeout and
-  the RPM sanity band still latch, and the only way to clear them in the
-  aircraft is to cycle the prop switch. With the prop resting on a pitch stop
-  the timeout will trip. This is firmware, not board, but it decides whether
-  the unit behaves like the original in flight.
+- **Latched alarms: decided 2026-11-15, both removed.** The firmware now has
+  no latched state at all, like the original. The 8-second relay timeout is
+  gone: it stopped the governor after any 8 seconds of continuous command,
+  which happens whenever the prop rests on a pitch stop, and the original
+  holds its output until the RPM is reached and leaves the stops to the limit
+  switches. A reading below 400 RPM is now a standby: relays off while it
+  lasts, governing resumes by itself. The 3500 RPM upper limit is gone
+  altogether: like the original, the governor answers any high reading by
+  commanding a decrease, which is what a real overspeed needs.
+- **Setpoint ramp: decided 2026-11-15.** The 100 RPM/s ramp may no longer
+  make the governor drive away from the knob setting. Before, an engine
+  accelerating faster than the ramp (start, in-flight restart, throttle
+  advance after a signal dropout) was answered with a decrease command,
+  toward coarse pitch, until the ramp caught up.
 - **Relay readback.** The dividers are fitted; the monitoring logic is not
   written.
 - **Stuck-driver protection.** One shorted output transistor still drives a
