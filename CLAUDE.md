@@ -56,6 +56,12 @@ reached, the aircraft's limit switches stop the motor at the pitch stops,
 and a failed limit switch costs gear wear, not control (Bill: the manual
 circuit has no limit switches at all). Do not add one back.
 
+**Relay output readback is monitoring only**, on purpose. The firmware cannot
+switch off an output whose transistor has failed short (that needs a series
+switch the board does not have), and refusing to drive the other relay is
+not clearly better than governing on. Do not make a readback fault change
+what the governor does without Bill's ruling.
+
 ## Layout
 
 | Path | What |
@@ -75,7 +81,7 @@ circuit has no limit switches at all). Do not add one back.
 
 - `pio run` — AVR build (env `nanoatmega328`; Adafruit SSD1306 + GFX)
 - `pio run -t upload` then `pio device monitor --baud 9600` — flash + console
-- `pio test -e native` — 66 Unity tests, no hardware needed. Needs `g++` on
+- `pio test -e native` — 77 Unity tests, no hardware needed. Needs `g++` on
   PATH, which this Windows machine does not have: use the MSVC recipe in
   [firmware/governor_350A/README.md](firmware/governor_350A/README.md).
   `test/mocks/` stubs all Arduino/AVR headers and the test file `#include`s
@@ -103,7 +109,7 @@ after clone).
 - Control: 10Hz loop; relay duty is time-proportioned within each 100ms
   window (slow on/off for relay contacts, NOT fast PWM). Deadband ±25 RPM,
   proportional zone 75 RPM, minimum duty 25%.
-- Resources (v3.0, `pio run`): 73% flash, 31% static RAM. The Adafruit
+- Resources (v3.0, `pio run`): 76% flash, 34% static RAM. The Adafruit
   display buffer takes another 1KB of heap when a display is fitted, so keep
   print strings in flash with `F()` and avoid `String`.
 - Serial console at 9600: `s` status, `a`/`m` auto/manual,
@@ -118,7 +124,7 @@ after clone).
   0.12A part. Full list: `hardware_rev3_3/REV3_3_CHANGES.md`.
 - J1: pin 5 (E) = pot sense with 10k pull-up to 5V, pin 6 (F) = ground,
   pin 7 (H) = magneto, offset one header position for clearance. Nano A7 =
-  pot, A3/A6 = relay output readback (dividers fitted, firmware unused),
+  pot, A3/A6 = relay output readback (firmware reports a mismatch, never acts on it),
   D2 = RPM, D6/D7 = relay drive.
 - The magneto isolating resistor (10k) is in the aircraft harness at the
   magneto, not in the box; the board adds R1 + R9 (5.1k each). The opto needs

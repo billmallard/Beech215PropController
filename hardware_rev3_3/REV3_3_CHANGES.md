@@ -35,7 +35,7 @@ Two things drove this revision.
 | 6 | Fuse footprint corrected | F1 was drawn on the 0.12 A 0ZRE0012FF footprint. It is now the 1 A 0ZRE0100FF footprint (10.2 mm lead spacing, 1.0 mm holes). |
 | 7 | Magneto input hardened | The 10k series resistor is split into R1 + R9 (5.1k each) so each sees half the voltage. D6 (1N4148) across the opto LED clamps reverse voltage (the LED is rated 5 V reverse). The two nets ahead of R9 are in a 2.5 mm clearance class. J1 pin 7 moves one position down the header (see layout). |
 | 8 | 12 V input protection | D5 (P6KE22A unidirectional TVS) after the fuse clamps bus transients and, with the fuse, covers reversed polarity. C2 moves to the protected side of the fuse and goes from 25 V to 50 V. |
-| 9 | Relay output readback | R14/R15 and R16/R17 (33k/10k) divide the INC and DEC outputs to Nano A3 and A6. Hardware provision only; firmware v3.0 does not use it yet. |
+| 9 | Relay output readback | R14/R15 and R16/R17 (33k/10k) divide the INC and DEC outputs to Nano A3 and A6. Since 2026-11-15 the firmware reads them every control tick and reports a driver that is live when it should be off or dead when it should be on. Report only. |
 | 10 | I2C pull-ups | R20, R21 (4.7k) on SCL and SDA. The documents said these existed; they did not. |
 | 11 | Footprints | Q1/Q2 move to the 2.54 mm wide TO-92 footprint (Rev 3.2 had 0.22 mm between the +12 V, base and output pads). R2 uses the 15.24 mm pitch resistor footprint (same part, leads bent wider). D1/D2 get a proper library link. |
 
@@ -106,6 +106,13 @@ All of these were run on the files in this folder.
 4. **Transistor pinout.** The board expects E-B-C viewed from the flat face.
    The ON Semi P2N2222A is C-B-E and must not be used.
 5. **Nothing has been powered.** No board of this revision exists.
+6. **Early-wiring aircraft (through D-1820).** There the panel switch
+   energises the relay coils directly in manual, on the same wires as leads C
+   and D, so bus voltage appears on both outputs while the governor is
+   unpowered. On this board that should back-feed about a milliamp through
+   each output transistor and under half a milliamp into a Nano input, which
+   is harmless on paper, and the original lived with the same condition. It
+   has not been tested. Later aircraft (D-1821 on) never see it.
 
 ## Decisions still open
 
@@ -126,11 +133,19 @@ All of these were run on the files in this folder.
   accelerating faster than the ramp (start, in-flight restart, throttle
   advance after a signal dropout) was answered with a decrease command,
   toward coarse pitch, until the ramp caught up.
-- **Relay readback.** The dividers are fitted; the monitoring logic is not
-  written.
-- **Stuck-driver protection.** One shorted output transistor still drives a
-  relay with nothing in firmware able to stop it. A second series switch
-  would fix that and is not in this revision.
+- **Relay readback: done 2026-11-15, monitoring only.** The firmware reports
+  an output that is live while commanded off or dead while commanded on. It
+  takes no action on either.
+- **Stuck-driver protection: still open, and it is a board change.** One
+  shorted output transistor still drives a relay with nothing in firmware
+  able to stop it; the prop runs to that pitch stop until the pilot leaves
+  AUTO. Stopping it takes a second switch in series with both drivers, which
+  is not in this revision. The only thing firmware alone could do is refuse
+  to drive the other relay, and that is not clearly an improvement: with the
+  other relay driven the motor has both fields energised and stalls where it
+  is, at the price of a likely trip of the 10 A prop breaker, which also
+  feeds manual control. A series switch also needs a ruling on what happens
+  after it trips, since a shorted transistor does not heal.
 
 ## Existing boards
 

@@ -64,8 +64,8 @@ before plugging it in. The board has 4.7kΩ pull-ups on SCL and SDA.
 | D7 | DEC drive | Output | HIGH = DEC relay on |
 | D8 | INC_LED | Output | Red LED via 330Ω |
 | D9 | DEC_LED | Output | Green LED via 330Ω |
-| A3 | INC_SENSE | Analog in | INC relay output through a 33k/10k divider (output ÷ 4.3). Not used by firmware v3.0 |
-| A6 | DEC_SENSE | Analog in | DEC relay output through a 33k/10k divider. Not used by firmware v3.0 |
+| A3 | INC_SENSE | Analog in | INC relay output through a 33k/10k divider (output ÷ 4.3). Read back by the firmware to check the driver; report only |
+| A6 | DEC_SENSE | Analog in | DEC relay output through a 33k/10k divider. Read back the same way |
 | A7 | POT_SENSE | Analog in | Panel control. 10kΩ pull-up to 5V on pin E, 10kΩ series, 100nF |
 | A4 | SDA | I2C | Optional display |
 | A5 | SCL | I2C | Optional display |

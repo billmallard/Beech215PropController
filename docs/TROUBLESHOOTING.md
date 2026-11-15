@@ -13,6 +13,15 @@ and on the optional bench display.
 
 The INC (red) and DEC (green) LEDs on the board follow the relay outputs.
 
+The console also reports the health of the two relay drivers. These are reports only; the governor
+carries on exactly as before.
+
+| Message | Meaning | Action |
+|---|---|---|
+| `DRIVER INC: STUCK_ON` / `DRIVER DEC: STUCK_ON` | That relay output is live although the governor is not commanding it | With nothing else feeding pin C or D, the output transistor (Q1 for INC, Q2 for DEC) or its driver (Q3, Q4) has failed short. **Do not fly the unit.** In the aircraft the relay stays energised until the prop switch is moved out of AUTO |
+| `DRIVER INC: NO_OUTPUT` / `DRIVER DEC: NO_OUTPUT` | The governor is commanding that relay and the output is dead | Driver transistor open or wrong way round, a missing resistor, or the output shorted to ground. Both channels at once: no 12 V reaching the drivers |
+| `DRIVER INC: OK` / `DRIVER DEC: OK` | A fault reported earlier has gone | — |
+
 Nothing latches: every condition above clears by itself, and there is nothing to reset. There is no
 upper RPM limit: a high reading is answered with a decrease command, as on the original.
 
