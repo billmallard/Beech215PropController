@@ -1,5 +1,12 @@
 # Hardware Rev 3.3 — Change Record and Verification Evidence
 
+> **Superseded 2026-11-15 by Rev 3.4** before any Rev 3.3 board was made.
+> Rev 3.4 is this design plus a series switch ahead of the relay drivers and
+> pads for an optional fault lamp: see
+> [hardware_rev3_4/REV3_4_CHANGES.md](../hardware_rev3_4/REV3_4_CHANGES.md).
+> Build Rev 3.4, with firmware v3.1. This file stays as the record of what
+> changed between Rev 3.2 and 3.3, all of which Rev 3.4 carries.
+
 Date: 2026-11-14. Base: Rev 3.2. Tooling: KiCad 10.0 (files are KiCad 10
 format). Matching firmware: v3.0.
 
@@ -136,16 +143,10 @@ All of these were run on the files in this folder.
 - **Relay readback: done 2026-11-15, monitoring only.** The firmware reports
   an output that is live while commanded off or dead while commanded on. It
   takes no action on either.
-- **Stuck-driver protection: still open, and it is a board change.** One
-  shorted output transistor still drives a relay with nothing in firmware
-  able to stop it; the prop runs to that pitch stop until the pilot leaves
-  AUTO. Stopping it takes a second switch in series with both drivers, which
-  is not in this revision. The only thing firmware alone could do is refuse
-  to drive the other relay, and that is not clearly an improvement: with the
-  other relay driven the motor has both fields energised and stalls where it
-  is, at the price of a likely trip of the 10 A prop breaker, which also
-  feeds manual control. A series switch also needs a ruling on what happens
-  after it trips, since a shorted transistor does not heal.
+- **Stuck-driver protection: done in Rev 3.4.** A series switch ahead of
+  both drivers, opened by the firmware when readback shows a relay output
+  live that was not commanded. It stays open until power is cycled (Bill,
+  2026-11-15). Rev 3.3 has no such switch.
 
 ## Existing boards
 
