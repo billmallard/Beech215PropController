@@ -117,8 +117,8 @@ after clone).
   density is high on purpose. Don't split into modules without Bill's OK.
 - `PULSES_PER_REV = 3` (6-cyl Continental) is the must-set-per-engine
   constant; 2 for 4-cylinder. `POT_RPM_MAX` (2650, knob full clockwise) and
-  `POT_RPM_MIN` (1800, full counter-clockwise) are placeholders awaiting
-  Bill's numbers.
+  `POT_RPM_MIN` (1800, full counter-clockwise) are the real range for
+  Bill's aircraft (confirmed 2026-11-15).
 - Setpoint comes only from the panel pot on A7: `Rpot = 10k * adc / (1023 -
   adc)`, linear in resistance. No presets, no EEPROM use.
 - Boots into AUTO and waits in standby until magneto pulses appear (the

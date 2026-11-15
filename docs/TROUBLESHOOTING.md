@@ -142,8 +142,8 @@ Firmware v3.1 stores nothing in EEPROM. These are compile-time constants at the 
 | Parameter | Default |
 |---|---|
 | PULSES_PER_REV | 3 |
-| POT_RPM_MAX (knob full clockwise) | 2650 RPM — placeholder, set for your engine |
-| POT_RPM_MIN (knob full counter-clockwise) | 1800 RPM — placeholder, set for your engine |
+| POT_RPM_MAX (knob full clockwise) | 2650 RPM — set for your engine |
+| POT_RPM_MIN (knob full counter-clockwise) | 1800 RPM — set for your engine |
 | Setpoint ramp | 100 RPM/sec |
 | Deadband | 25 RPM |
 | Proportional zone | 75 RPM |

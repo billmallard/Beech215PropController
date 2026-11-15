@@ -38,8 +38,9 @@
                                     // Use 2 for 4-cylinder engines
 
 // ── RPM RANGE OF THE PANEL KNOB ───────────────────────────────────────────────
-// SET PER AIRCRAFT / ENGINE. These defaults are PLACEHOLDERS pending Bill's
-// decision — do not fly them without confirming against the engine's limits.
+// SET PER AIRCRAFT / ENGINE. The defaults are the range confirmed by Bill for
+// his aircraft on 2026-11-15. Any other installation must set its own and
+// confirm them against the engine's limits.
 // The knob is linear between the two ends.
 #define POT_RPM_MAX         2650    // Knob full clockwise (pot ~0 ohm): take-off RPM
 #define POT_RPM_MIN         1800    // Knob full counter-clockwise (pot 10k): lowest RPM

@@ -39,7 +39,7 @@ How it behaves, deliberately matching the original 350A box:
 
 All early Bonanzas use Continental 6-cylinder engines. `3` is correct for all of them. Getting this wrong causes the RPM reading to be off by 33% and the governor will not hold correctly.
 
-`POT_RPM_MAX` / `POT_RPM_MIN` are the two ends of the panel knob. **The shipped values are placeholders pending a decision — set them for the aircraft and engine before flight.** `POT_RPM_MAX` takes the place of the take-off RPM trim screw of the original 350A (which shipped set to 2300 unless ordered otherwise).
+`POT_RPM_MAX` / `POT_RPM_MIN` are the two ends of the panel knob. **The shipped values (2650 and 1800) are the range confirmed for the first aircraft on 2026-11-15. For any other aircraft and engine, set and confirm your own before flight.** `POT_RPM_MAX` takes the place of the take-off RPM trim screw of the original 350A (which shipped set to 2300 unless ordered otherwise).
 
 ---
 

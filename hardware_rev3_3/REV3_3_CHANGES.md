@@ -99,15 +99,54 @@ All of these were run on the files in this folder.
 1. **Relay coil current.** It is not documented anywhere. The original 350A
    ran its whole supply through a 1/2 A fuse, so the coil draws less than
    that. With 1k base resistors the 2N2907A is comfortably saturated to about
-   250 mA. Measure one coil. If it is above ~250 mA, lower R11/R13 or change
-   Q1/Q2 before flight.
+   250 mA. Measure both coils. If either is above ~250 mA, lower R11/R13 (and
+   R22 on Rev 3.4) or change the output transistors before flight.
+   **How, with a multimeter, engine off, 7-pin connector unplugged from the
+   governor, working on the aircraft-side connector:**
+   - *By resistance (no power).* Master off, prop at an intermediate pitch so
+     both limit switches are closed. Ohmmeter from pin C to airframe ground,
+     then pin D to ground. Each reading is one relay coil. Coil current at
+     14 V is 14 divided by that resistance: 56 ohms or more is 250 mA or
+     less.
+   - *By current (confirms it).* This is the original manual's relay test
+     (Service Note 1, step 7) with the meter in place of its U-shaped jumper.
+     Meter on DC amps, 10 A input, one probe on pin A and the other on pin C.
+     Battery switch on, prop switch to AUTO: the relay pulls in, the prop runs
+     to full fine and stops. The meter reads the coil current only (the motor
+     is fed through the relay contacts, not through the meter) and falls to
+     zero when the limit switch opens. Repeat from pin A to pin D, which runs
+     the prop to full coarse. Note the bus voltage; with the alternator
+     charging the current is about a tenth higher than on the battery. Leave
+     the prop at full fine. Never put a meter set to amps between pin A and
+     pin B or ground: that is a dead short across the bus.
 2. **Magneto signal level.** The original harness has its own 10k isolating
    resistor at the magneto (manual: pin H reads 10 000 ohms to ground), so the
    opto LED sees the P-lead through about 20k in total. The 6N137 needs about
    5 mA, which means P-lead peaks of roughly 100 V or more. That is typical of
-   a magneto primary but has not been measured on this aircraft. Scope pin H
-   with the engine running before relying on it. R1 and R9 can be changed
-   without a board change if more current is needed.
+   a magneto primary but has not been measured on this aircraft. R1 and R9
+   can be changed without a board change if more current is needed, so this
+   does not have to be known before boards are ordered.
+   **How to check it:**
+   - *The test that counts needs no instrument:* with a built board in the
+     aircraft and a laptop on the Nano's USB port, run the engine and compare
+     `ACT=` on the status line with the panel tachometer at idle and at
+     run-up RPM. A steady, correct reading at both is a pass. It does not
+     show how much margin there is.
+   - *Margin, without an oscilloscope:* a multimeter cannot read these
+     pulses directly (they last well under a millisecond), but it can read a
+     peak detector. Connector unplugged from the governor; a 1N4007 in series
+     from pin H into a 0.1 uF film capacitor rated 630 V or more, the
+     capacitor's other lead to airframe ground; meter on DC volts across the
+     capacitor; engine running. Take the reading, then turn the diode round
+     and take it again for the other polarity. At least one of the two should
+     be well above 105 V (5 mA through 20.2k plus the LED). The capacitor
+     holds that voltage afterwards: discharge it through a resistor.
+   - *The full picture:* an oscilloscope on pin H with a x10 probe rated for
+     the voltage (expect a few hundred volts peak) shows the pulse shape and
+     the ringing after it, which the peak detector cannot. Worth doing if the
+     RPM reading is ever erratic; not required otherwise.
+   Measuring at pin H cannot ground the magneto: the 10k isolating resistor
+   is between pin H and the P-lead.
 3. **F1 fit.** The footprint is the KiCad library part for the 0ZRE0100FF.
    Check it against the part in hand.
 4. **Transistor pinout.** The board expects E-B-C viewed from the flat face.
@@ -123,9 +162,9 @@ All of these were run on the files in this folder.
 
 ## Decisions still open
 
-- **Pot range.** Firmware v3.0 maps full clockwise to 2650 RPM and full
-  counter-clockwise to 1800 RPM. Both are placeholders
-  (`POT_RPM_MAX` / `POT_RPM_MIN`).
+- **Pot range: decided 2026-11-15.** Full clockwise is 2650 RPM and full
+  counter-clockwise is 1800 RPM (`POT_RPM_MAX` / `POT_RPM_MIN`). Bill
+  confirmed these as the real range for his aircraft.
 - **Latched alarms: decided 2026-11-15, both removed.** The firmware now has
   no latched state at all, like the original. The 8-second relay timeout is
   gone: it stopped the governor after any 8 seconds of continuous command,

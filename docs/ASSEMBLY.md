@@ -226,7 +226,7 @@ Open `firmware/governor_350A/governor_350A.ino`. At the top of the file, find th
 // ── Panel control range — SET FOR YOUR ENGINE ──────────────────
 #define POT_RPM_MAX         2650   // Knob full clockwise: take-off RPM
 #define POT_RPM_MIN         1800   // Knob full counter-clockwise: lowest RPM
-// These two are placeholders. Set them for your engine's limits.
+// 2650 and 1800 are the range of the first aircraft. Set them for your engine's limits.
 
 // ── Control tuning ─────────────────────────────────────────────
 #define DEADBAND_RPM        25     // No correction within ±25 RPM of setpoint
